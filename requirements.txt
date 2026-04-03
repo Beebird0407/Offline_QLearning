@@ -1,0 +1,22 @@
+# Core dependencies
+numpy>=1.21.0
+scipy>=1.7.0
+torch>=2.0.0
+matplotlib>=3.5.0
+
+# Optional: Mamba SSM (if available, will use GPU-accelerated version)
+# pip install mamba-ssm
+
+# Optional: For BBOB benchmarks (if using COCO framework)
+# pip install cocoex
+
+# Optional: For MuJoCo tasks (neuroevolution OOD test)
+# pip install mujoco-py  # or mujoco >= 3.0
+
+# Optional: For HDF5 dataset format
+# pip install h5py
+
+# Development
+pytest>=7.0.0
+black>=22.0.0
+flake8>=4.0.0

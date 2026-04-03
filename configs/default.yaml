@@ -1,0 +1,65 @@
+# Q-Mamba Configuration File
+# Modify these parameters to customize the experiment
+
+# === Dataset Configuration ===
+dataset:
+  dim: 5                    # Problem dimension (5, 10, 20, or 50)
+  train_instances: 16       # Number of training instances per function
+  test_instances: 1        # Number of testing instances per function
+  mu: 0.5                   # Mix ratio (fraction from pretrained baselines)
+  n_total_trajectories: 10000  # Total trajectory count D
+  trajectory_length: 500    # T: Number of generations per trajectory
+
+# === State/Action Configuration ===
+state_action:
+  state_dim: 9              # State dimension
+  K: 3                      # Number of action parameters (3 for Alg0)
+  M: 16                     # Number of bins per parameter
+
+# === Algorithm Configuration ===
+algorithm:
+  type: "Alg0"              # Alg0, Alg1, or Alg2
+  pop_size: 20              # Population size
+  use_lpsr: true            # Use Linear Population Size Reduction
+  min_pop_size: 4           # Minimum population size for LPSR
+
+# === Model Configuration ===
+model:
+  type: "qmamba"            # qmamba, dt, dema, qdt, qt, q_transformer
+  d_model: 128              # Hidden dimension
+  d_state: 16               # Mamba state dimension
+  n_layers: 1               # Number of Mamba/Transformer layers
+
+# === Training Configuration ===
+training:
+  lr: 0.001                 # Learning rate 
+  gamma: 0.99               # Discount factor
+  beta: 10.0                # TD loss weight for final action
+  lam: 0.1                  # Conservative regularization coefficient (lower for faster learning)
+  batch_size: 64            # Batch size
+  n_epochs: 100             # Number of training epochs
+  grad_clip: 0.5            # Gradient clipping
+  weight_decay: 0.0001      # Weight decay
+  eval_interval: 10         # Evaluation interval (epochs)
+  checkpoint_interval: 50   # Checkpoint saving interval
+  print_every: 1           # Print every N steps (1=every step)
+  scheduler: cosine         # Learning rate scheduler: cosine, step, or none
+
+# === Evaluation Configuration ===
+evaluation:
+  n_runs: 19                # Number of independent runs per test
+  n_runs_ood: 10           # Number of runs for OOD test
+
+# === Ablation Configuration ===
+ablation:
+  lambda_values: [0.0, 1.0, 10.0]
+  beta_values: [1.0, 10.0]
+  mu_values: [0.0, 0.25, 0.5, 0.75, 1.0]
+  bin_values: [16, 32, 64, 128, 256, 512]
+
+# === Paths ===
+paths:
+  data_dir: "./data"
+  checkpoint_dir: "./checkpoints"
+  results_dir: "./results"
+  dataset_path: "./data/ee_dataset.pkl"
