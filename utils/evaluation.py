@@ -283,12 +283,6 @@ def benchmark_out_of_distribution(
 
     if verbose:
         print(f"  Running OOD test on {task_name}...")
-
-    # Placeholder: In practice, this would:
-    # 1. Create a 2-layer MLP policy network
-    # 2. Use the agent to configure DE parameters for evolving the policy
-    # 3. Evaluate on MuJoCo task
-
     return {
         'task': task_name,
         'n_runs': n_runs,
