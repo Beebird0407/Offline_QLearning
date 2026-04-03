@@ -12,27 +12,12 @@ from .qmamba import QMamba
 
 
 class QMAgent:
-    """
-    Q-Mamba agent for black-box optimization.
-
-    Provides:
-    - Action selection (greedy or stochastic)
-    - Optimization loop with state tracking
-    - Configuration history
-    """
-
     def __init__(
         self,
         model: QMamba,
         device: str = 'cpu',
         deterministic: bool = True
     ):
-        """
-        Args:
-            model: Trained QMamba model
-            device: Device to use
-            deterministic: If True, use argmax; else sample
-        """
         self.model = model.to(device)
         self.device = device
         self.deterministic = deterministic
@@ -55,15 +40,6 @@ class QMAgent:
         return cls(model, device=device)
 
     def select_action(self, state: np.ndarray) -> np.ndarray:
-        """
-        Select action for given state.
-
-        Args:
-            state: (state_dim,) current state
-
-        Returns:
-            action: (K,) selected action bins
-        """
         with torch.no_grad():
             s = torch.tensor(state, dtype=torch.float32, device=self.device)
             acts, _, _ = self.model.act(s, deterministic=self.deterministic)
@@ -80,22 +56,6 @@ class QMAgent:
         seed: Optional[int] = None,
         track_history: bool = True
     ) -> Dict:
-        """
-        Run optimization using the agent.
-
-        Args:
-            problem: Objective function (minimize)
-            dim: Problem dimension
-            bounds: (dim, 2) decision space bounds
-            pop_size: Population size
-            T: Number of generations
-            optimizer_class: Optimizer class to use (default: Alg0)
-            seed: Random seed
-            track_history: Track optimization history
-
-        Returns:
-            dict with keys: best_fitness, best_x, config_history, fitness_history
-        """
         if optimizer_class is None:
             from algorithms.alg0 import Alg0Optimizer as optimizer_class
 

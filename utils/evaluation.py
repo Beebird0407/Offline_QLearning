@@ -37,14 +37,6 @@ class Evaluator:
         n_runs: int = 19,
         seed: int = 42
     ):
-        """
-        Args:
-            agent: Q-Mamba agent
-            pop_size: Population size
-            T: Number of generations
-            n_runs: Number of independent runs per test
-            seed: Base random seed
-        """
         self.agent = agent
         self.pop_size = pop_size
         self.T = T
@@ -59,9 +51,6 @@ class Evaluator:
         curr_best: float,
         optimum: float = 0.0
     ) -> float:
-        """
-        Compute reward: (f^{t-1} - f^t) / (f^{t-1} - f^*)
-        """
         if prev_best <= curr_best:
             return 0.0
 
@@ -76,12 +65,6 @@ class Evaluator:
         optimum: float = 0.0,
         seed: Optional[int] = None
     ) -> Tuple[float, float, float, List[float], float, float]:
-        """
-        Evaluate agent on a single problem.
-
-        Returns:
-            (best_fitness, mean_fitness, std_fitness, convergence_curve, train_time, inf_time)
-        """
         rng = np.random.RandomState(seed or self.seed)
 
         all_best_fitness = []
@@ -166,12 +149,6 @@ class Evaluator:
         bbob_suite: BBOBSuite,
         verbose: bool = True
     ) -> Dict[str, EvaluationResult]:
-        """
-        Evaluate on BBOB test suite.
-
-        Returns:
-            Dict of {function_name: EvaluationResult}
-        """
         results = {}
 
         test_functions = bbob_suite.get_test_functions()
@@ -223,11 +200,6 @@ def benchmark_in_distribution(
     n_runs: int = 19,
     verbose: bool = True
 ) -> Dict:
-    """
-    In-distribution generalization test.
-
-    Tests on 8 unseen BBOB instances.
-    """
     evaluator = Evaluator(
         agent=agent,
         n_runs=n_runs
@@ -263,12 +235,6 @@ def benchmark_out_of_distribution(
     pop_size: int = 10,
     verbose: bool = True
 ) -> Dict:
-    """
-    Out-of-distribution: Neuroevolution on MuJoCo tasks.
-
-    Note: Requires mujoco-py or brax to be installed.
-    This is a placeholder implementation.
-    """
     try:
         # Try to import mujoco
         import mujoco

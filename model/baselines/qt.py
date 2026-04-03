@@ -15,12 +15,6 @@ from .dt import DecisionTransformer
 
 
 class QTransformer(nn.Module):
-    """
-    Transformer with Q-value regularization.
-
-    Combines action prediction with Q-value estimation for consistency.
-    """
-
     def __init__(
         self,
         state_dim: int = 9,
@@ -65,13 +59,6 @@ class QTransformer(nn.Module):
         rtg: torch.Tensor,
         mask: Optional[torch.Tensor] = None
     ) -> tuple:
-        """
-        Forward pass.
-
-        Returns:
-            action_logits: (B, T, K, M)
-            q_values: (B, T, K, M) Q-values per action dimension
-        """
         # Get action logits
         action_logits = self.dt(states, actions, rtg, mask)
 
@@ -93,13 +80,6 @@ class QTransformer(nn.Module):
         next_states: torch.Tensor,
         dones: torch.Tensor
     ) -> torch.Tensor:
-        """
-        Compute Q-value consistency loss.
-
-        For each action dimension:
-        - Q(s, a) should predict actual return
-        - Q(s, a) should be consistent across dimensions
-        """
         B, T, K = actions.shape
 
         # Current Q-values

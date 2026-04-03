@@ -10,15 +10,6 @@ from typing import Optional, Tuple, Callable, Dict, Any
 
 
 class Alg0Optimizer:
-    """
-    Differential Evolution with current-to-rand/1 mutation and exponential crossover.
-
-    Features:
-    - F1, F2: Scaling factors for mutation
-    - Cr: Crossover probability
-    - LPSR (Linear Population Size Reduction): Gradually reduce population size
-    """
-
     K = 3  # Number of action parameters: F1, F2, Cr
 
     # Parameter ranges
@@ -35,15 +26,6 @@ class Alg0Optimizer:
         use_lpsr: bool = True,
         min_pop_size: int = 4
     ):
-        """
-        Args:
-            dim: Problem dimension
-            bounds: Decision space bounds (dim, 2)
-            pop_size: Initial population size
-            seed: Random seed
-            use_lpsr: Whether to use linear population size reduction
-            min_pop_size: Minimum population size for LPSR
-        """
         self.dim = dim
         self.bounds = bounds
         self.pop_size_init = pop_size
@@ -87,10 +69,6 @@ class Alg0Optimizer:
         F1: float,
         F2: float
     ) -> np.ndarray:
-        """
-        DE/current-to-rand/1 mutation:
-        mutant = x_i + F1*(x_r1 - x_r2) + F2*(x_r3 - x_r4)
-        """
         n = len(population)
         indices = [i for i in range(n)]
         self.rng.shuffle(indices)
@@ -107,10 +85,6 @@ class Alg0Optimizer:
         mutant: np.ndarray,
         Cr: float
     ) -> np.ndarray:
-        """
-        Exponential crossover:
-        Copy a contiguous segment from mutant, starting at random position.
-        """
         dim = len(target)
         trial = target.copy()
 
@@ -152,20 +126,6 @@ class Alg0Optimizer:
         t: int = 0,
         T: int = 100
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        One optimization step.
-
-        Args:
-            pop: Current population (pop_size, dim)
-            fitness: Current fitness values (pop_size,)
-            action: (F1_bin, F2_bin, Cr_bin)
-            func: Objective function
-            t: Current time step
-            T: Total time steps
-
-        Returns:
-            (new_pop, new_fitness)
-        """
         F1_bin, F2_bin, Cr_bin = int(action[0]), int(action[1]), int(action[2])
         M = 16  # Default bin count
         F1 = self.bin_to_F1(F1_bin, M)

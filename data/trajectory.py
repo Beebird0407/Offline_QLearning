@@ -158,15 +158,6 @@ class TrajectoryCollector:
         T: int = 500,
         seed: int = 42
     ):
-        """
-        Args:
-            optimizer_class: Optimizer class (Alg0, Alg1, or Alg2)
-            state_extractor: StateExtractor instance
-            action_space: ActionSpace instance
-            pop_size: Population size
-            T: Number of optimization steps
-            seed: Random seed
-        """
         self.optimizer_class = optimizer_class
         self.state_extractor = state_extractor
         self.action_space = action_space
@@ -182,12 +173,6 @@ class TrajectoryCollector:
         curr_best: float,
         y_range: float = 1.0
     ) -> float:
-        """
-        Compute reward based on improvement.
-
-        reward = (f^{t-1} - f^t) / (f^{t-1} - f^*)
-        For minimization, we use: reward = (old_best - new_best) / (old_best - optimum)
-        """
         if prev_best <= curr_best:
             return 0.0  # No improvement
 
@@ -207,21 +192,6 @@ class TrajectoryCollector:
         meta_agent=None,
         seed: Optional[int] = None
     ) -> Trajectory:
-        """
-        Collect a single optimization trajectory.
-
-        Args:
-            problem: Objective function
-            dim: Problem dimension
-            bounds: Decision space bounds
-            strategy: 'random', 'exploit', or 'meta_alg'
-            task_id: Identifier for this task
-            meta_agent: Trained agent for 'meta_alg' strategy
-            seed: Optional seed override
-
-        Returns:
-            Trajectory object
-        """
         rng = self.rng if seed is None else np.random.RandomState(seed)
 
         # Initialize optimizer
@@ -306,19 +276,6 @@ class TrajectoryCollector:
         meta_agent=None,
         verbose: bool = True
     ) -> List[Trajectory]:
-        """
-        Collect trajectories for multiple problems.
-
-        Args:
-            problems: List of (name, function) pairs
-            bounds: Decision space bounds
-            strategy: Action selection strategy
-            meta_agent: Optional trained agent
-            verbose: Print progress
-
-        Returns:
-            List of trajectories
-        """
         trajectories = []
         for i, (name, prob) in enumerate(problems):
             dim = len(bounds)

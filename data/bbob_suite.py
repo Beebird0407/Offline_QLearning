@@ -151,15 +151,6 @@ class Levy(BBOBFunction):
 
 
 class BBOBSuite:
-    """
-    BBOB-style benchmark suite.
-
-    Provides:
-    - Training instances: 16 (for offline RL training)
-    - Testing instances: 8 (for evaluation)
-    - Dimensions: 5, 10, 20, 50
-    """
-
     FUNCTION_CLASSES = {
         'sphere': Sphere,
         'ellipsoid': Ellipsoid,
@@ -178,13 +169,6 @@ class BBOBSuite:
         test_instances: int = 8,
         seed: int = 42
     ):
-        """
-        Args:
-            dim: Problem dimension (5, 10, 20, or 50)
-            train_instances: Number of training instances per function
-            test_instances: Number of testing instances per function
-            seed: Random seed
-        """
         self.dim = dim
         self.train_instances = train_instances
         self.test_instances = test_instances

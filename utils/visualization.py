@@ -71,16 +71,6 @@ def plot_convergence(
     show: bool = True,
     title: str = 'Convergence Curves'
 ):
-    """
-    Plot convergence curves for multiple algorithms.
-
-    Args:
-        results_dict: Dict of {name: [list of convergence curves per run]}
-        labels: Optional list of display names
-        save_path: Path to save figure
-        show: Whether to display the plot
-        title: Plot title
-    """
     fig, ax = plt.subplots(figsize=(10, 6))
 
     if labels is None:
@@ -127,16 +117,6 @@ def plot_boxplot(
     show: bool = True,
     title: str = 'Performance by Bin Count'
 ):
-    """
-    Plot box plot for ablation study.
-
-    Args:
-        data_dict: Dict of {name: list of performance values}
-        labels: Optional list of display names
-        save_path: Path to save figure
-        show: Whether to display the plot
-        title: Plot title
-    """
     fig, ax = plt.subplots(figsize=(10, 6))
 
     names = list(data_dict.keys())
@@ -178,16 +158,6 @@ def plot_neuroevolution(
     show: bool = True,
     title: str = 'Neuroevolution on MuJoCo'
 ):
-    """
-    Plot neuroevolution optimization curves.
-
-    Args:
-        results_dict: Dict of {name: [list of fitness curves per run]}
-        labels: Optional list of display names
-        save_path: Path to save figure
-        show: Whether to display the plot
-        title: Plot title
-    """
     fig, ax = plt.subplots(figsize=(10, 6))
 
     if labels is None:
@@ -233,18 +203,6 @@ def plot_ablation_heatmap(
     title: str = 'Ablation Study',
     cmap: str = 'viridis'
 ):
-    """
-    Plot heatmap for ablation study.
-
-    Args:
-        data: (n_rows, n_cols) array of performance values
-        row_labels: Labels for rows (e.g., λ values)
-        col_labels: Labels for columns (e.g., β values)
-        save_path: Path to save figure
-        show: Whether to display the plot
-        title: Plot title
-        cmap: Colormap name
-    """
     fig, ax = plt.subplots(figsize=(8, 6))
 
     im = ax.imshow(data, cmap=cmap)

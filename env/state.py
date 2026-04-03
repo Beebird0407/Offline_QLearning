@@ -26,19 +26,6 @@ def calc_state(
     T: int,
     best_so_far: Optional[float] = None
 ) -> np.ndarray:
-    """
-    Compute 9-dimensional state representation.
-
-    Args:
-        population: (pop_size, dim) current population
-        fitnesses: (pop_size,) current fitness values
-        t: Current time step
-        T: Total time steps
-        best_so_far: Best fitness observed so far (for improvement tracking)
-
-    Returns:
-        state: (9,) normalized state vector
-    """
     pop_size, dim = population.shape
 
     # 1. Normalized mean fitness
@@ -121,18 +108,6 @@ class StateExtractor:
         self.prev_best = None
 
     def compute(self, population: np.ndarray, fitnesses: np.ndarray, t: int, T: int) -> np.ndarray:
-        """
-        Compute state with automatic history tracking.
-
-        Args:
-            population: (pop_size, dim)
-            fitnesses: (pop_size,)
-            t: Current time step
-            T: Total time steps
-
-        Returns:
-            state: (9,) state vector
-        """
         # Get best so far from history
         best_so_far = self.history_best[-1] if self.history_best else None
 

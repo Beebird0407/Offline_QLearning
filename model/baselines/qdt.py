@@ -13,13 +13,6 @@ from .dt import DecisionTransformer
 
 
 class QDT(nn.Module):
-    """
-    Decision Transformer with Q-value recalibration.
-
-    Additional Q-value head predicts optimal return, which is used to
-    recalibrate the RTG target during training.
-    """
-
     def __init__(
         self,
         state_dim: int = 9,
@@ -55,14 +48,6 @@ class QDT(nn.Module):
         rtg: torch.Tensor,
         mask: Optional[torch.Tensor] = None
     ) -> tuple:
-        """
-        Forward pass.
-
-        Returns:
-            action_logits: (B, T, K, M)
-            q_values: (B, T) predicted Q-values
-            recalibrated_rtg: (B, T) recalibrated RTG targets
-        """
         # Get action logits from DT
         action_logits = self.dt(states, actions, rtg, mask)
 

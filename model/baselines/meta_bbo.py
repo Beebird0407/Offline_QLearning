@@ -15,12 +15,6 @@ import pickle
 
 
 class RLPSO(nn.Module):
-    """
-    RLPSO: Particle Swarm Optimization with MLP-learned velocity update.
-
-    Uses MLP to predict optimal PSO parameters (w, c1, c2) given state.
-    """
-
     def __init__(self, state_dim: int = 9, hidden_dim: int = 64):
         super().__init__()
         self.state_dim = state_dim
@@ -59,12 +53,6 @@ class RLPSO(nn.Module):
 
 
 class LDE(nn.Module):
-    """
-    LDE: DE with LSTM-learned parameter prediction.
-
-    Uses LSTM to model DE parameter evolution and predict (F, Cr).
-    """
-
     def __init__(self, state_dim: int = 9, hidden_dim: int = 64):
         super().__init__()
         self.state_dim = state_dim
@@ -84,17 +72,6 @@ class LDE(nn.Module):
         )
 
     def forward(self, state_seq: torch.Tensor, hidden: Optional[Tuple] = None) -> Tuple[torch.Tensor, Tuple]:
-        """
-        Predict DE parameters from state sequence.
-
-        Args:
-            state_seq: (B, T, state_dim)
-            hidden: LSTM hidden state
-
-        Returns:
-            params: (B, 2) - F, Cr
-            hidden: updated hidden state
-        """
         lstm_out, hidden = self.lstm(state_seq, hidden)
         # Use last output
         last_out = lstm_out[:, -1, :]
@@ -126,12 +103,6 @@ class LDE(nn.Module):
 
 
 class GLEET(nn.Module):
-    """
-    GLEET: Global-Local Evolution with Transformer.
-
-    Uses Transformer to model global search direction and predict DE parameters.
-    """
-
     def __init__(self, state_dim: int = 9, hidden_dim: int = 64, n_heads: int = 4, n_layers: int = 2):
         super().__init__()
         self.state_dim = state_dim
@@ -174,16 +145,6 @@ class GLEET(nn.Module):
         )
 
     def forward(self, state: torch.Tensor, pop_history: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Predict combined DE parameters.
-
-        Args:
-            state: (B, state_dim) current state
-            pop_history: (B, T, dim) optional population history
-
-        Returns:
-            F, Cr: Combined parameters
-        """
         B = state.shape[0]
 
         # Embed current state
@@ -244,29 +205,12 @@ class GLEET(nn.Module):
 
 
 class MetaBBOManager:
-    """
-    Manager for MetaBBO baselines.
-
-    Provides unified interface for loading and using pretrained baselines.
-    """
-
     def __init__(self, device: str = 'cpu'):
         self.device = device
         self.models: Dict[str, nn.Module] = {}
         self._states: Dict[str, any] = {}  # Hidden states for LSTM
 
     def load_baseline(self, name: str, path: str, state_dim: int = 9) -> bool:
-        """
-        Load a pretrained baseline.
-
-        Args:
-            name: 'rlpso', 'lde', or 'gleet'
-            path: Path to model checkpoint
-            state_dim: State dimension
-
-        Returns:
-            True if loaded successfully
-        """
         try:
             if name.lower() == 'rlpso':
                 self.models[name] = RLPSO.load(path, state_dim)
@@ -285,16 +229,6 @@ class MetaBBOManager:
             return False
 
     def predict(self, name: str, state: np.ndarray) -> Tuple[int, ...]:
-        """
-        Predict action bins using baseline.
-
-        Args:
-            name: 'rlpso', 'lde', or 'gleet'
-            state: (state_dim,) numpy array
-
-        Returns:
-            action bins tuple
-        """
         if name not in self.models:
             raise ValueError(f"Model {name} not loaded")
 
@@ -338,11 +272,6 @@ class MetaBBOManager:
 
 
 def create_random_baseline(K: int = 3, M: int = 16) -> callable:
-    """
-    Create a random baseline for exploration.
-
-    Returns uniform random action bins.
-    """
     def predict(state: np.ndarray, rng: Optional[np.random.RandomState] = None) -> Tuple[int, ...]:
         if rng is None:
             rng = np.random.RandomState()
@@ -351,11 +280,6 @@ def create_random_baseline(K: int = 3, M: int = 16) -> callable:
 
 
 def create_exploit_baseline(K: int = 3, M: int = 16) -> callable:
-    """
-    Create an exploitation-oriented baseline.
-
-    Uses heuristic to favor moderate F and high Cr values.
-    """
     def predict(state: np.ndarray, rng: Optional[np.random.RandomState] = None, t: int = 0, T: int = 500) -> Tuple[int, ...]:
         if rng is None:
             rng = np.random.RandomState()

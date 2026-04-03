@@ -446,13 +446,6 @@ class AdaptiveCQLTrainer(QMTrainer):
         actions: torch.Tensor,
         mask: torch.Tensor
     ) -> float:
-        """
-        Compute adaptive lambda based on Q-value optimism.
-
-        Q-optimism = E[max_a Q(s,a) - selected_Q(s,a)]
-        High optimism → increase lambda to penalize overestimation
-        Low optimism → decrease lambda to allow exploitation
-        """
         B, T, K, _ = Q.shape
 
         Q_max = Q.max(-1).values

@@ -12,20 +12,6 @@ from typing import Optional
 
 
 class DecisionTransformer(nn.Module):
-    """
-    Decision Transformer for offline RL.
-
-    Predicts actions given:
-    - Return-to-Go (RTG) targets
-    - Historical states
-    - Historical actions
-
-    Architecture:
-    - Embed tokens (RTG, state, action) with linear layers
-    - Pass through Transformer blocks
-    - Predict action logits
-    """
-
     def __init__(
         self,
         state_dim: int = 9,
@@ -77,18 +63,6 @@ class DecisionTransformer(nn.Module):
         rtg: torch.Tensor,          # (B, T) - return-to-go targets
         mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
-        """
-        Forward pass.
-
-        Args:
-            states: (B, T, state_dim)
-            actions: (B, T, K) action tokens
-            rtg: (B, T) return-to-go targets
-            mask: Optional attention mask
-
-        Returns:
-            action_logits: (B, T, K, M) predicted action logits
-        """
         B, T, _ = states.shape
 
         # Embed inputs
@@ -130,16 +104,6 @@ class DecisionTransformer(nn.Module):
         rtg: float,
         deterministic: bool = True
     ) -> torch.Tensor:
-        """
-        Action selection at inference.
-
-        Args:
-            state: (B, state_dim)
-            rtg: float, target return
-
-        Returns:
-            actions: (B, K) selected action tokens
-        """
         B = state.shape[0]
         T = 1
 

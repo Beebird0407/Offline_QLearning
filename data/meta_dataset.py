@@ -10,14 +10,6 @@ from .trajectory import Trajectory, TrajectoryCollector
 
 
 class EEDatasetBuilder:
-    """
-    Builds E&E (Explore & Exploit) trajectory dataset.
-
-    Mixes trajectories from:
-    1. Pretrained MetaBBO baselines (exploitation) - μ fraction
-    2. Random policy (exploration) - (1-μ) fraction
-    """
-
     def __init__(
         self,
         bbob_suite: BBOBSuite,
@@ -30,18 +22,6 @@ class EEDatasetBuilder:
         mu: float = 0.5,
         seed: int = 42
     ):
-        """
-        Args:
-            bbob_suite: BBOBSuite instance
-            optimizer_class: Optimizer class to use
-            state_dim: State dimension
-            K: Number of action parameters
-            M: Number of bins per parameter
-            pop_size: Population size
-            T: Trajectory length (generations)
-            mu: Mix ratio (fraction from pretrained baselines)
-            seed: Random seed
-        """
         self.bbob_suite = bbob_suite
         self.optimizer_class = optimizer_class
         self.state_dim = state_dim
@@ -70,12 +50,6 @@ class EEDatasetBuilder:
         )
 
     def _get_pretrained_baselines(self) -> Dict[str, Callable]:
-        """
-        Get pretrained MetaBBO baselines (RLPSO, LDE, GLEET).
-
-        For now, returns exploit strategy functions.
-        In practice, these would be trained neural networks.
-        """
         # Placeholder for actual pretrained baselines
         # In real implementation, load trained models here
         return {
@@ -92,19 +66,6 @@ class EEDatasetBuilder:
         save_path: Optional[str] = None,
         verbose: bool = True
     ) -> Tuple[List[Trajectory], List[Trajectory]]:
-        """
-        Build the E&E dataset.
-
-        Args:
-            n_total: Total number of trajectories (D=10K default)
-            n_train_tasks: Number of training tasks to use (default: all)
-            meta_agents: Dict of trained meta agents for 'meta_alg' strategy
-            save_path: Optional path to save dataset
-            verbose: Print progress
-
-        Returns:
-            (train_trajectories, val_trajectories) - 80/20 split
-        """
         rng = np.random.RandomState(self.seed)
 
         # Calculate trajectory counts

@@ -11,15 +11,6 @@ from typing import Optional, Tuple, Callable, List
 
 
 class Alg1Optimizer:
-    """
-    Hybrid GA-DE optimizer with two subgroups sharing information.
-
-    Controllable parameters (10 total):
-    - GA subgroup (5 params): mutation_sigma, crossover_prob, selection_pressure, ga_ratio, elite_ratio
-    - DE subgroup (5 params): F1, F2, Cr, de_ratio, survivor_ratio
-    - Shared (2 params): cm1, cm2 (communication rates)
-    """
-
     K = 10  # Number of action parameters
 
     # GA parameter ranges

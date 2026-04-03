@@ -13,17 +13,6 @@ from typing import Optional, Tuple, Callable, List, Dict
 
 
 class Alg2Optimizer:
-    """
-    4-Subgroup heterogeneous evolutionary algorithm.
-
-    Controllable parameters (16 total):
-    - Subgroup 1 (4 params): sg1_cr, sg1_eta, sg1_ratio, sg1_cm
-    - Subgroup 2 (4 params): sg2_cr, sg2_sigma, sg2_ratio, sg2_cm
-    - Subgroup 3 (4 params): sg3_F1, sg3_F2, sg3_Cr, sg3_ratio
-    - Subgroup 4 (4 params): sg4_F1, sg4_F2, sg4_Cr, sg4_ratio
-    - Shared: communication rates (cm1~cm4)
-    """
-
     K = 16  # Number of action parameters
 
     # Subgroup 1: MPX + Polynomial mutation

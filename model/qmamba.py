@@ -89,20 +89,6 @@ class MambaBlock(nn.Module):
 
 
 class QMamba(nn.Module):
-    """
-    Q-Mamba: Q-learning agent with Mamba backbone.
-
-    Learns to select optimal hyperparameter configurations for evolutionary algorithms.
-
-    Args:
-        state_dim: Dimension of state representation (9 default)
-        K: Number of action parameters (3 for Alg0: F1, F2, Cr)
-        M: Number of bins per action parameter (16 default)
-        d_model: Hidden dimension for Mamba
-        d_state: Mamba state dimension
-        n_layers: Number of Mamba layers
-    """
-
     def __init__(
         self,
         state_dim: int = 9,
