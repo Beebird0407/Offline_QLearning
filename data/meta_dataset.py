@@ -1,11 +1,4 @@
-"""
-E&E Dataset Builder and Meta Data Loader
-
-Builds offline dataset with:
-- Mixed trajectories: μ=0.5 (50% from pretrained baselines, 50% from random)
-- Total trajectories: D=10K
-- Trajectory length: T=500 steps
-"""
+"""E&E Dataset Builder and Meta Data Loader."""
 
 import numpy as np
 import pickle

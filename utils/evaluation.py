@@ -1,11 +1,4 @@
-"""
-Evaluation Module
-
-Implements:
-- In-distribution generalization (8 unseen BBOB instances)
-- Out-of-distribution generalization (Neuroevolution on MuJoCo)
-- Ablation experiments
-"""
+"""Evaluation module for Q-Mamba and baselines."""
 
 import numpy as np
 import time
@@ -157,14 +150,7 @@ class Evaluator:
             all_best_fitness.append(best_fitness)
             all_convergence.append(fitness_history)
 
-        # Compute cumulative performance
-        mean_conv = np.mean(all_convergence, axis=0)
-        perf = 0.0
-        for i in range(1, len(mean_conv)):
-            if mean_conv[i-1] > mean_conv[i]:
-                perf += (mean_conv[i-1] - mean_conv[i]) / (mean_conv[0] - optimum + 1e-8)
-
-        train_time = 0.0  # Already trained
+        train_time = 0.0
 
         return (
             np.min(all_best_fitness),

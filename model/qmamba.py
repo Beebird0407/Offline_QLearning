@@ -1,13 +1,4 @@
-"""
-Q-Mamba: Mamba-based Q-Learner for Black-Box Optimization Configuration
-
-Architecture:
-- Input: Current state s^t concatenated with previous action token (a_{i-1}^t)
-- Embedding layer: Binary token -> embedding
-- Mamba block: Sequence modeling
-- Q-value heads: One per action dimension, outputs M Q-values each
-- Autoregressive inference: Q1 -> Q2 -> ... -> QK
-"""
+"""Q-Mamba: Mamba-based Q-Learner for Black-Box Optimization."""
 
 import numpy as np
 import torch
@@ -126,27 +117,15 @@ class QMamba(nn.Module):
         self.K = K
         self.M = M
         self.d_model = d_model
-        self.token_dim = 5  # 5-bit encoding for each action bin
+        self.token_dim = 5
 
-        # Total input dimension: state + token
         inp_dim = state_dim + self.token_dim
-
-        # State normalization
         self.state_norm = RunningNorm(state_dim)
-
-        # Token embedding
-        self.token_embed = nn.Embedding(M + 1, self.token_dim)  # M bins + 1 start token
-
-        # Input projection
+        self.token_embed = nn.Embedding(M + 1, self.token_dim)
         self.input_proj = nn.Linear(inp_dim, d_model)
-
-        # Mamba layers
         self.mamba_layers = nn.ModuleList([
             MambaBlock(d_model, d_state) for _ in range(n_layers)
         ])
-
-        # Q-value heads (one per action dimension)
-        # Each head outputs M Q-values
         self.q_heads = nn.ModuleList([
             nn.Sequential(
                 nn.Linear(d_model + inp_dim, d_model),
@@ -157,9 +136,7 @@ class QMamba(nn.Module):
             )
             for _ in range(K)
         ])
-
-        # Start token (all ones = 11111 = M in decimal)
-        self.start_token_idx = M  # Use M as start token index
+        self.start_token_idx = M
 
     def _get_start_token(self, batch_size: int, device) -> torch.Tensor:
         """Get start token tensor."""
@@ -170,42 +147,16 @@ class QMamba(nn.Module):
         s_t: torch.Tensor,
         prev_token: torch.Tensor,
         h: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        """
-        Single step forward pass for one action dimension.
-
-        Args:
-            s_t: (B, state_dim) current state
-            prev_token: (B,) previous action token indices
-            h: hidden state
-
-        Returns:
-            q_values: (B, M) Q-values for this dimension
-            curr_token: (B,) current action token (argmax)
-            h: updated hidden state
-        """
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """Single step forward pass for one action dimension."""
         B = s_t.shape[0]
-
-        # Embed previous token
-        prev_tok_emb = self.token_embed(prev_token)  # (B, token_dim)
-
-        # Concatenate state and token
-        inp = torch.cat([s_t, prev_tok_emb], dim=-1)  # (B, state_dim + token_dim)
-
-        # Project to d_model
-        x = self.input_proj(inp).unsqueeze(1)  # (B, 1, d_model)
-
-        # Pass through Mamba layers
+        prev_tok_emb = self.token_embed(prev_token)
+        inp = torch.cat([s_t, prev_tok_emb], dim=-1)
+        x = self.input_proj(inp).unsqueeze(1)
         for mamba_layer in self.mamba_layers:
             x, h = mamba_layer(x, h)
-
-        x = x.squeeze(1)  # (B, d_model)
-
-        # Concatenate with original input for Q-head
-        q_inp = torch.cat([x, inp], dim=-1)  # (B, d_model + inp_dim)
-
-        # Get Q-values for all K dimensions (share intermediate)
-        # For autoregressive, we process each dimension separately
+        x = x.squeeze(1)
+        q_inp = torch.cat([x, inp], dim=-1)
         return q_inp, h
 
     def forward(
@@ -214,20 +165,8 @@ class QMamba(nn.Module):
         actions: torch.Tensor,
         return_all_q: bool = False
     ) -> torch.Tensor:
-        """
-        Forward pass over a batch of sequences.
-
-        Args:
-            states: (B, T, state_dim)
-            actions: (B, T, K) - action bin indices
-            return_all_q: If True, return all Q-values
-
-        Returns:
-            Q_all: (B, T, K, M) Q-values for each action at each timestep
-        """
+        """Forward pass over a batch of sequences."""
         B, T, _ = states.shape
-
-        # Normalize states
         s_flat = self.state_norm(states.reshape(B * T, -1))
         states = s_flat.reshape(B, T, -1)
 
@@ -235,31 +174,25 @@ class QMamba(nn.Module):
         h = None
 
         for t in range(T):
-            s_t = states[:, t]  # (B, state_dim)
+            s_t = states[:, t]
             prev_token = self._get_start_token(B, states.device)
 
             for i in range(self.K):
                 q_inp, h = self._forward_one_step(s_t, prev_token, h)
+                q_i = self.q_heads[i](q_inp)
 
-                # Compute Q-values for this dimension
-                q_i = self.q_heads[i](q_inp)  # (B, M)
-
-                # Min-max normalization
                 q_min = q_i.min(-1, keepdim=True).values
                 q_max = q_i.max(-1, keepdim=True).values
                 q_i = (q_i - q_min) / (q_max - q_min + 1e-8)
 
                 Q_all[:, t, i] = q_i
 
-                # Get action token for next dimension
                 if i < self.K - 1:
-                    # Use actual action if available (training), else argmax
                     if actions is not None:
                         prev_token = actions[:, t, i]
                     else:
                         prev_token = q_i.argmax(-1)
 
-            # Detach h between timesteps for memory efficiency
             if h is not None and isinstance(h, torch.Tensor):
                 h = h.detach()
 
@@ -272,19 +205,7 @@ class QMamba(nn.Module):
         deterministic: bool = True,
         h: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        """
-        Greedy action selection at inference.
-
-        Args:
-            s: (B, state_dim) or (state_dim,) current state
-            deterministic: If True, use argmax; else sample
-            h: hidden state
-
-        Returns:
-            acts: (B, K) selected action bins
-            q_values: (B, K, M) Q-values for all actions
-            h: updated hidden state
-        """
+        """Greedy action selection at inference."""
         if s.dim() == 1:
             s = s.unsqueeze(0)
         B = s.shape[0]
@@ -298,10 +219,8 @@ class QMamba(nn.Module):
 
         for i in range(self.K):
             q_inp, h_out = self._forward_one_step(s_norm, prev_token, h_out)
+            q_i = self.q_heads[i](q_inp)
 
-            q_i = self.q_heads[i](q_inp)  # (B, M)
-
-            # Min-max normalization
             q_min = q_i.min(-1, keepdim=True).values
             q_max = q_i.max(-1, keepdim=True).values
             q_i_norm = (q_i - q_min) / (q_max - q_min + 1e-8)

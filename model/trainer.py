@@ -1,11 +1,4 @@
-"""
-Q-Mamba Trainer with TD Learning and CQL Regularization
-
-Implements the Q-loss function from the paper:
-- TD error for i < K: (Q_{i,a_i^t} - max_j Q_{i+1,j}^t)^2 / 2
-- TD error for i = K: β * (Q_{K,a_K^t} - (r^t + γ * max_j Q_{1,j}^{t+1}))^2 / 2
-- Conservative regularization: (λ/2) * (Q_{i,j}^t)^2 for j ≠ a_i^t
-"""
+"""Q-Mamba Trainer with TD Learning and CQL Regularization."""
 
 import os
 import json
@@ -40,13 +33,7 @@ class TrainingConfig:
 
 
 class QMTrainer:
-    """
-    Trainer for Q-Mamba with:
-    - TD learning with组合 Q-loss
-    - CQL regularization
-    - Gradient clipping
-    - Checkpointing and resume
-    """
+    """Trainer for Q-Mamba with TD learning, CQL regularization, and checkpointing."""
 
     def __init__(
         self,
@@ -54,12 +41,6 @@ class QMTrainer:
         config: Optional[TrainingConfig] = None,
         device: Optional[str] = None
     ):
-        """
-        Args:
-            model: QMamba model to train
-            config: Training configuration
-            device: Device to use (auto-detect if None)
-        """
         self.model = model
 
         if config is None:
@@ -72,14 +53,12 @@ class QMTrainer:
 
         self.model.to(device)
 
-        # Optimizer
         self.optimizer = AdamW(
             model.parameters(),
             lr=config.lr,
             weight_decay=config.weight_decay
         )
 
-        # Learning rate scheduler
         self.scheduler = None
         if config.scheduler == 'cosine':
             self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -90,15 +69,12 @@ class QMTrainer:
                 self.optimizer, step_size=30, gamma=0.5
             )
 
-        # Training history
         self.history = {
             'total_loss': [],
             'td_loss': [],
             'cql_loss': [],
             'lr': []
         }
-
-        # Checkpoint management
         self.best_loss = float('inf')
         self.epoch = 0
         self.global_step = 0
@@ -112,75 +88,40 @@ class QMTrainer:
         dones: torch.Tensor,
         mask: torch.Tensor
     ) -> Tuple[torch.Tensor, float, float]:
-        """
-        Compute combined Q-loss (vectorized).
-
-        Args:
-            states: (B, T, state_dim)
-            actions: (B, T, K) action bin indices
-            rewards: (B, T) rewards
-            next_states: (B, T, state_dim)
-            dones: (B, T) done flags
-            mask: (B, T) valid transition mask
-
-        Returns:
-            total_loss, td_loss, cql_loss
-        """
+        """Compute combined Q-loss (vectorized TD + CQL)."""
         B, T, K = actions.shape
         M = self.model.M
         gamma = self.config.gamma
         beta = self.config.beta
         lam = self.config.lam
 
-        # Forward pass
-        Q = self.model(states, actions)  # (B, T, K, M)
+        Q = self.model(states, actions)
 
         with torch.no_grad():
-            # Next state Q-values
             dummy_actions = torch.zeros_like(actions)
-            Q_next = self.model(next_states, dummy_actions)  # (B, T, K, M)
-
-            # Bootstrap: max Q-value for next state's first dimension
-            Q1_next_max = Q_next[:, :, 0, :].max(-1).values  # (B, T)
-
-            # Compute returns: r^t + γ * max_j Q_{1,j}^{t+1}
+            Q_next = self.model(next_states, dummy_actions)
+            Q1_next_max = Q_next[:, :, 0, :].max(-1).values
             target_q = rewards + gamma * Q1_next_max * (1 - dones)
             target_q = torch.clamp(target_q, 0.0, 1.0)
 
-        # Expand mask for broadcasting: (B, T, 1, 1)
-        mask_4d = mask.unsqueeze(-1).unsqueeze(-1)  # (B, T, 1, 1)
-
-        # === TD Loss (vectorized) ===
         td_total = torch.tensor(0.0, device=self.device)
 
-        # For i < K-1: chain TD
         for i in range(K - 1):
-            # Q-selected: Q[:, :, i, :] gathered at actions[:, :, i]
-            Q_sel = torch.gather(Q[:, :, i, :], dim=-1, index=actions[:, :, i].unsqueeze(-1)).squeeze(-1)  # (B, T)
-            # Q-target: max of Q[:, :, i+1, :]
-            Q_next_i1_max = Q[:, :, i + 1, :].max(-1).values  # (B, T)
-            # TD error
+            Q_sel = torch.gather(Q[:, :, i, :], dim=-1, index=actions[:, :, i].unsqueeze(-1)).squeeze(-1)
+            Q_next_i1_max = Q[:, :, i + 1, :].max(-1).values
             td_i = 0.5 * (Q_sel - Q_next_i1_max.detach()) ** 2
             td_total = td_total + (td_i * mask).sum()
 
-        # For i = K-1 (final): reward TD
-        Q_sel_last = torch.gather(Q[:, :, K - 1, :], dim=-1, index=actions[:, :, K - 1].unsqueeze(-1)).squeeze(-1)  # (B, T)
+        Q_sel_last = torch.gather(Q[:, :, K - 1, :], dim=-1, index=actions[:, :, K - 1].unsqueeze(-1)).squeeze(-1)
         td_last = beta * 0.5 * (Q_sel_last - target_q.detach()) ** 2
         td_total = td_total + (td_last * mask).sum()
 
-        # === CQL Loss (vectorized) ===
-        # Sum of Q-values for j != selected action, for all valid transitions
-        # Q_i_expanded: (B, T, K, M), actions_expanded: (B, T, K, 1)
-        actions_exp = actions.unsqueeze(-1).expand(B, T, K, 1)  # (B, T, K, 1)
-        Q_sel_all = torch.gather(Q, dim=-1, index=actions_exp).squeeze(-1)  # (B, T, K)
+        actions_exp = actions.unsqueeze(-1).expand(B, T, K, 1)
+        Q_sel_all = torch.gather(Q, dim=-1, index=actions_exp).squeeze(-1)
 
-        # Create mask for unselected actions: all Q values except selected ones
-        # For each (b, t, i), we want sum over j != actions[b, t, i] of Q[b, t, i, j]^2
-        # This equals: sum(all Q^2) - Q[selected]^2
-
-        Q_sq = Q ** 2  # (B, T, K, M)
-        Q_sq_sum_all = Q_sq.sum(dim=-1)  # (B, T, K) - sum over all M bins
-        Q_sq_sum_selected = (Q_sel_all ** 2)  # (B, T, K) - sum over selected bins only (which is just 1 value)
+        Q_sq = Q ** 2
+        Q_sq_sum_all = Q_sq.sum(dim=-1)
+        Q_sq_sum_selected = (Q_sel_all ** 2)
 
         # CQL = (lam/2) * sum over j != selected of Q^2 = (lam/2) * (sum_all - sum_selected)
         cql_per_elem = (lam / 2) * (Q_sq_sum_all - Q_sq_sum_selected)  # (B, T, K)
@@ -203,7 +144,6 @@ class QMTrainer:
         """Single training step."""
         self.model.train()
 
-        # Convert numpy arrays to tensors (blocking for safety)
         def to_tensor(x):
             if isinstance(x, np.ndarray):
                 dtype = np.float32 if x.dtype == np.float64 else np.int64
@@ -212,10 +152,7 @@ class QMTrainer:
 
         batch = {k: to_tensor(v) for k, v in batch.items()}
 
-        # Zero grad
         self.optimizer.zero_grad()
-
-        # Forward + backward
         loss, td, cql = self._compute_q_loss(**batch)
 
         if torch.isfinite(loss):
@@ -223,7 +160,6 @@ class QMTrainer:
             nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
             self.optimizer.step()
 
-        # Update history
         self.global_step += 1
         self.history['total_loss'].append(float(loss))
         self.history['td_loss'].append(td)
@@ -278,19 +214,7 @@ class QMTrainer:
         verbose: bool = True,
         print_every: int = 1
     ) -> Dict:
-        """
-        Full training loop with per-step output option.
-
-        Args:
-            train_loader: Training data loader
-            val_loader: Optional validation data loader
-            n_epochs: Number of epochs (default: from config)
-            verbose: Print progress
-            print_every: Print every N steps (1 = every step, 10 = every 10 steps)
-
-        Returns:
-            Training history
-        """
+        """Full training loop."""
         if n_epochs is None:
             n_epochs = self.config.n_epochs
 
@@ -308,7 +232,6 @@ class QMTrainer:
             print(f"  Print every: {print_every} step(s)")
             print(f"{'='*60}\n")
 
-        # Estimate steps per epoch
         steps_per_epoch = len(train_loader)
         total_steps = n_epochs * steps_per_epoch
         print_step = max(1, print_every)
@@ -316,7 +239,6 @@ class QMTrainer:
         import time
         step_times = []
 
-        # Warmup: one dummy forward pass to trigger CUDA JIT compilation
         if verbose:
             print("Warming up CUDA...")
             print("-" * 60, flush=True)
@@ -330,14 +252,10 @@ class QMTrainer:
         for epoch in range(self.epoch + 1, self.epoch + n_epochs + 1):
             self.epoch = epoch
             epoch_start = time.time()
-
-            # Reset epoch tracking
             epoch_losses = {'total': [], 'td': [], 'cql': []}
 
             for step_idx, batch in enumerate(train_loader):
                 step_start = time.time()
-
-                # Train step
                 losses = self.train_step(batch)
                 epoch_losses['total'].append(losses['total'])
                 epoch_losses['td'].append(losses['td'])
@@ -346,10 +264,8 @@ class QMTrainer:
                 step_time = time.time() - step_start
                 step_times.append(step_time)
 
-                # Print every N steps
                 global_step = (epoch - 1) * steps_per_epoch + step_idx + 1
                 if verbose and global_step % print_step == 0:
-                    # Calculate ETA
                     avg_step_time = np.mean(step_times[-100:]) if step_times else 0
                     eta_seconds = avg_step_time * (total_steps - global_step)
                     eta_str = ""
@@ -364,11 +280,9 @@ class QMTrainer:
                           f"(TD={losses['td']:.4f}, CQL={losses['cql']:.4f}) "
                           f"| LR: {lr:.2e}{eta_str}", flush=True)
 
-            # Epoch summary
             train_metrics = {k: float(np.mean(v)) for k, v in epoch_losses.items()}
             epoch_time = time.time() - epoch_start
 
-            # Evaluate every N epochs
             val_metrics = None
             if val_loader is not None and epoch % max(1, self.config.eval_interval // 10) == 0:
                 val_metrics = self.evaluate(val_loader)
@@ -383,23 +297,18 @@ class QMTrainer:
                 msg += f" | Time: {epoch_time:.1f}s | LR: {lr:.2e}"
                 print(msg)
 
-            # Save checkpoint
             if epoch % self.config.checkpoint_interval == 0:
                 self.save_checkpoint(f'checkpoint_epoch_{epoch}.pth')
 
-            # Save best model
             if train_metrics['total'] < self.best_loss:
                 self.best_loss = train_metrics['total']
                 self.save_checkpoint('best.pth')
 
-            # Step scheduler
             if self.scheduler is not None:
                 self.scheduler.step()
 
-        # Final save
         self.save_checkpoint('final.pth')
 
-        # Save history
         history_path = os.path.join(self.config.save_dir, 'history.json')
         with open(history_path, 'w') as f:
             json.dump(self.history, f, indent=2)
@@ -437,7 +346,6 @@ class QMTrainer:
         torch.save(checkpoint, path)
 
     def load_checkpoint(self, path: str, load_optimizer: bool = True):
-        """Load model checkpoint for resume training."""
         checkpoint = torch.load(path, map_location=self.device)
 
         self.model.load_state_dict(checkpoint['model_state_dict'])
@@ -467,19 +375,7 @@ class QMTrainer:
 
 
 class AdaptiveCQLTrainer(QMTrainer):
-    """
-    Adaptive Conservative Q-Learning Trainer.
-
-    Dynamically adjusts the conservatism coefficient (λ) based on:
-    - Q-value optimism: E[max_a Q(s,a) - selected_Q(s,a)]
-    - When Q is overestimated → increase λ to penalize
-    - When Q is calibrated → decrease λ to allow exploitation
-
-    Features:
-    1. Adaptive lambda based on Q-value optimism
-    2. Uncertainty estimation via dropout variance
-    3. Per-dimension uncertainty weighting for CQL penalty
-    """
+    """Adaptive CQL trainer with dynamic λ adjustment based on Q-value optimism."""
 
     def __init__(
         self,
@@ -494,22 +390,8 @@ class AdaptiveCQLTrainer(QMTrainer):
         dropout_p: float = 0.1,
         uncertainty_samples: int = 8
     ):
-        """
-        Args:
-            model: QMamba model
-            config: Training configuration
-            device: Device to use
-            lam_init: Initial lambda value
-            lam_min: Minimum lambda
-            lam_max: Maximum lambda
-            optimism_threshold_high: Increase lambda if optimism > this
-            optimism_threshold_low: Decrease lambda if optimism < this
-            dropout_p: Dropout probability for uncertainty estimation
-            uncertainty_samples: Number of dropout samples for uncertainty
-        """
         super().__init__(model, config, device)
 
-        # Adaptive lambda parameters
         self.lam = lam_init
         self.lam_init = lam_init
         self.lam_min = lam_min
@@ -517,20 +399,15 @@ class AdaptiveCQLTrainer(QMTrainer):
         self.optimism_threshold_high = optimism_threshold_high
         self.optimism_threshold_low = optimism_threshold_low
 
-        # Uncertainty estimation
         self.dropout_p = dropout_p
         self.uncertainty_samples = uncertainty_samples
 
-        # State tracking
         self._q_optimism_ema = 0.0
         self._optimism_alpha = 0.1
         self._uncertainty_ema = None
         self._uncertainty_alpha = 0.1
 
-        # Enable dropout for uncertainty estimation
         self._set_dropout(True)
-
-        # History for adaptive lambda
         self.history['lambda'] = []
 
     def _set_dropout(self, enabled: bool):
@@ -544,11 +421,7 @@ class AdaptiveCQLTrainer(QMTrainer):
         states: torch.Tensor,
         actions: torch.Tensor
     ) -> torch.Tensor:
-        """
-        Estimate Q-value uncertainty via dropout-induced variance.
-
-        Returns uncertainty score per state-action pair.
-        """
+        """Estimate Q-value uncertainty via dropout-induced variance."""
         if self.uncertainty_samples <= 1:
             return torch.zeros_like(actions, dtype=torch.float32, device=self.device)
 
@@ -582,37 +455,29 @@ class AdaptiveCQLTrainer(QMTrainer):
         """
         B, T, K, _ = Q.shape
 
-        # Compute optimism: difference between max Q and selected Q
-        Q_max = Q.max(-1).values  # [B, T, K]
-        Q_sel = torch.gather(Q, dim=-1, index=actions.unsqueeze(-1)).squeeze(-1)  # [B, T, K]
+        Q_max = Q.max(-1).values
+        Q_sel = torch.gather(Q, dim=-1, index=actions.unsqueeze(-1)).squeeze(-1)
 
-        optimism = (Q_max - Q_sel).detach()  # [B, T, K]
+        optimism = (Q_max - Q_sel).detach()
 
-        # Only consider valid transitions
-        valid_mask = mask.unsqueeze(-1) > 0.5  # [B, T, 1]
+        valid_mask = mask.unsqueeze(-1) > 0.5
         optimism = optimism[valid_mask]
 
         if optimism.numel() == 0:
             return self.lam
 
-        # Mean optimism across valid transitions
         mean_optimism = optimism.mean().item()
 
-        # Update EMA
         self._q_optimism_ema = (
             (1 - self._optimism_alpha) * self._q_optimism_ema
             + self._optimism_alpha * mean_optimism
         )
 
-        # Adapt lambda based on optimism
         if self._q_optimism_ema > self.optimism_threshold_high:
-            # High optimism → increase lambda
             self.lam = min(self.lam * 1.05, self.lam_max)
         elif self._q_optimism_ema < self.optimism_threshold_low:
-            # Low optimism → decrease lambda
             self.lam = max(self.lam * 0.95, self.lam_min)
         else:
-            # Smooth convergence towards initial value
             self.lam = self.lam + 0.01 * (self.lam_init - self.lam)
 
         return self.lam
@@ -626,34 +491,22 @@ class AdaptiveCQLTrainer(QMTrainer):
         dones: torch.Tensor,
         mask: torch.Tensor
     ) -> Tuple[torch.Tensor, float, float]:
-        """
-        Compute adaptive CQL loss with uncertainty-based penalty (vectorized).
-        """
+        """Compute adaptive CQL loss with uncertainty-based penalty."""
         B, T, K = actions.shape
         M = self.model.M
         gamma = self.config.gamma
         beta = self.config.beta
 
-        # Forward pass
         Q = self.model(states, actions)
-
-        # Estimate uncertainty for conservative penalty
-        uncertainty = self._estimate_uncertainty(states, actions)  # [B, T]
-
-        # Compute adaptive lambda
+        uncertainty = self._estimate_uncertainty(states, actions)
         adaptive_lam = self._compute_adaptive_lambda(Q, actions, mask)
 
         with torch.no_grad():
-            # Next state Q-values
             dummy_actions = torch.zeros_like(actions)
             Q_next = self.model(next_states, dummy_actions)
             Q1_next_max = Q_next[:, :, 0, :].max(-1).values
-
-            # Target
             target_q = rewards + gamma * Q1_next_max * (1 - dones)
             target_q = torch.clamp(target_q, 0.0, 1.0)
-
-        # === TD Loss (vectorized) ===
         td_total = torch.tensor(0.0, device=self.device)
 
         # For i < K-1: chain TD
@@ -669,7 +522,6 @@ class AdaptiveCQLTrainer(QMTrainer):
         td_total = td_total + (td_last * mask).sum()
 
         # === CQL Loss with uncertainty (vectorized) ===
-        # Normalize uncertainty to [0, 1] per batch
         unc_min = uncertainty.min()
         unc_max = uncertainty.max()
         if unc_max > unc_min:
@@ -677,28 +529,22 @@ class AdaptiveCQLTrainer(QMTrainer):
         else:
             unc_norm = torch.zeros_like(uncertainty)
 
-        # Expand for broadcasting: (B, T, K, 1)
         unc_norm_4d = unc_norm.unsqueeze(-1).unsqueeze(-1).expand(B, T, K, M)
 
-        # Q-squared: (B, T, K, M)
         Q_sq = Q ** 2
 
-        # Sum of Q^2 for unselected actions
         actions_exp = actions.unsqueeze(-1).expand(B, T, K, M)
         selected_mask = torch.zeros_like(Q, dtype=torch.bool)
         for i in range(K):
             selected_mask[:, :, i, :] = (actions[:, :, i:i+1] == torch.arange(M, device=actions.device)).transpose(0, 1)
 
-        # Alternative: simpler way - compute sum_all and subtract sum_selected
-        Q_sq_sum_all = Q_sq.sum(dim=-1)  # (B, T, K)
-        Q_sq_selected = torch.gather(Q_sq, dim=-1, index=actions.unsqueeze(-1)).squeeze(-1) ** 2  # (B, T, K)
+        Q_sq_sum_all = Q_sq.sum(dim=-1)
+        Q_sq_selected = torch.gather(Q_sq, dim=-1, index=actions.unsqueeze(-1)).squeeze(-1) ** 2
 
-        # CQL = (lam * (1 + 0.5 * unc) / 2) * (sum_all - sum_selected)
-        unc_weight = adaptive_lam * (1.0 + 0.5 * unc_norm.unsqueeze(-1))  # (B, T, K)
-        cql_per_elem = (unc_weight / 2) * (Q_sq_sum_all - Q_sq_selected)  # (B, T, K)
+        unc_weight = adaptive_lam * (1.0 + 0.5 * unc_norm.unsqueeze(-1))
+        cql_per_elem = (unc_weight / 2) * (Q_sq_sum_all - Q_sq_selected)
         cql_total = (cql_per_elem * mask.unsqueeze(-1)).sum()
 
-        # === Total loss ===
         n_valid = mask.sum() * K
         n_valid = n_valid.clamp(min=1.0)
 
@@ -712,7 +558,6 @@ class AdaptiveCQLTrainer(QMTrainer):
         """Single training step with adaptive CQL."""
         self.model.train()
 
-        # Convert numpy arrays to tensors
         def to_tensor(x):
             if isinstance(x, np.ndarray):
                 if x.dtype == np.float64:
@@ -724,17 +569,13 @@ class AdaptiveCQLTrainer(QMTrainer):
 
         batch = {k: to_tensor(v) for k, v in batch.items()}
 
-        # Compute loss
         self.optimizer.zero_grad()
         loss, td, cql = self._compute_q_loss(**batch)
-
-        # Backward
         if torch.isfinite(loss):
             loss.backward()
             nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
             self.optimizer.step()
 
-        # Update tracking
         self.global_step += 1
         self.history['total_loss'].append(float(loss))
         self.history['td_loss'].append(td)

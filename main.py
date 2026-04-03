@@ -1,8 +1,4 @@
-"""
-Q-Mamba: Offline Meta Black-Box Optimization
-
-Main entry point for training and evaluation.
-"""
+"""Q-Mamba: Offline Meta Black-Box Optimization."""
 
 import argparse
 import yaml
