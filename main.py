@@ -49,6 +49,13 @@ def main():
         from data.bbob_suite import BBOBSuite
         from data.meta_dataset import EEDatasetBuilder, MetaDataLoader
         from algorithms.alg0 import Alg0Optimizer
+        from algorithms.alg1 import Alg1Optimizer
+        from algorithms.alg2 import Alg2Optimizer
+
+        # Get algorithm type from config
+        alg_type = config.get('algorithm', {}).get('type', 'Alg0')
+        alg_map = {'Alg0': Alg0Optimizer, 'Alg1': Alg1Optimizer, 'Alg2': Alg2Optimizer}
+        OptimizerClass = alg_map.get(alg_type, Alg0Optimizer)
 
         # Build dataset
         print("\n[1/4] Building E&E dataset...")
@@ -60,15 +67,21 @@ def main():
 
         K = config.get('state_action', {}).get('K', 3)
         M = config.get('state_action', {}).get('M', 16)
+        pop_size = config.get('algorithm', {}).get('pop_size', 20)
+        use_lpsr = config.get('algorithm', {}).get('use_lpsr', True)
+        min_pop_size = config.get('algorithm', {}).get('min_pop_size', 4)
 
         builder = EEDatasetBuilder(
             bbob_suite=bbob_suite,
-            optimizer_class=Alg0Optimizer,
+            optimizer_class=OptimizerClass,
             K=K,
             M=M,
+            pop_size=pop_size,
             mu=config.get('dataset', {}).get('mu', 0.5),
             T=config.get('dataset', {}).get('trajectory_length', 500),
-            seed=42
+            seed=42,
+            use_lpsr=use_lpsr,
+            min_pop_size=min_pop_size
         )
 
         dataset_path = config.get('paths', {}).get('dataset_path', './data/ee_dataset.pkl')
@@ -131,7 +144,8 @@ def main():
             save_dir=config.get('paths', {}).get('checkpoint_dir', './checkpoints'),
             eval_interval=config.get('training', {}).get('eval_interval', 10),
             checkpoint_interval=config.get('training', {}).get('checkpoint_interval', 50),
-            scheduler=config.get('training', {}).get('scheduler', 'none')
+            scheduler=config.get('training', {}).get('scheduler', 'none'),
+            algorithm=alg_type
         )
 
         trainer = QMTrainer(model, train_config, device)
@@ -172,7 +186,9 @@ def main():
         results = benchmark_in_distribution(
             agent=agent,
             bbob_suite=bbob_suite,
-            n_runs=config.get('evaluation', {}).get('n_runs', 19)
+            n_runs=config.get('evaluation', {}).get('n_runs', 19),
+            pop_size=config.get('algorithm', {}).get('pop_size', 20),
+            T=config.get('dataset', {}).get('trajectory_length', 500)
         )
 
         # Save results

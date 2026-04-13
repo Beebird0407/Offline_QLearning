@@ -198,11 +198,15 @@ def benchmark_in_distribution(
     agent: QMAgent,
     bbob_suite: BBOBSuite,
     n_runs: int = 19,
+    pop_size: int = 20,
+    T: int = 500,
     verbose: bool = True
 ) -> Dict:
     evaluator = Evaluator(
         agent=agent,
-        n_runs=n_runs
+        n_runs=n_runs,
+        pop_size=pop_size,
+        T=T
     )
 
     results = evaluator.evaluate_bbob(bbob_suite, verbose=verbose)

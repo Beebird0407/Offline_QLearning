@@ -156,7 +156,9 @@ class TrajectoryCollector:
         action_space,
         pop_size: int = 20,
         T: int = 500,
-        seed: int = 42
+        seed: int = 42,
+        use_lpsr: bool = True,
+        min_pop_size: int = 4
     ):
         self.optimizer_class = optimizer_class
         self.state_extractor = state_extractor
@@ -164,6 +166,8 @@ class TrajectoryCollector:
         self.pop_size = pop_size
         self.T = T
         self.rng = np.random.RandomState(seed)
+        self.use_lpsr = use_lpsr
+        self.min_pop_size = min_pop_size
 
     def _compute_reward(
         self,
@@ -195,7 +199,14 @@ class TrajectoryCollector:
         rng = self.rng if seed is None else np.random.RandomState(seed)
 
         # Initialize optimizer
-        opt = self.optimizer_class(dim=dim, bounds=bounds, pop_size=self.pop_size, seed=seed or rng.randint(1e6))
+        opt = self.optimizer_class(
+            dim=dim,
+            bounds=bounds,
+            pop_size=self.pop_size,
+            seed=seed or rng.randint(1e6),
+            use_lpsr=self.use_lpsr,
+            min_pop_size=self.min_pop_size
+        )
         pop = opt.initialize()
         fitness = np.array([problem(x) for x in pop])
 

@@ -30,6 +30,7 @@ class TrainingConfig:
     eval_interval: int = 10
     checkpoint_interval: int = 50
     scheduler: str = 'none'  # 'none', 'cosine', or 'step'
+    algorithm: str = 'Alg0'  # Algorithm type: Alg0, Alg1, or Alg2
 
 
 class QMTrainer:
@@ -223,6 +224,7 @@ class QMTrainer:
         if verbose:
             print(f"\n{'='*60}")
             print(f"  Q-Mamba Training")
+            print(f"  Algorithm: {self.config.algorithm}")
             print(f"  Device: {self.device}")
             print(f"  Epochs: {n_epochs}")
             print(f"  Batch size: {self.config.batch_size}")

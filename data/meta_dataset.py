@@ -20,7 +20,9 @@ class EEDatasetBuilder:
         pop_size: int = 20,
         T: int = 500,
         mu: float = 0.5,
-        seed: int = 42
+        seed: int = 42,
+        use_lpsr: bool = True,
+        min_pop_size: int = 4
     ):
         self.bbob_suite = bbob_suite
         self.optimizer_class = optimizer_class
@@ -31,22 +33,24 @@ class EEDatasetBuilder:
         self.T = T
         self.mu = mu
         self.seed = seed
+        self.use_lpsr = use_lpsr
+        self.min_pop_size = min_pop_size
 
-        # Setup state extractor and action space
         from env.state import StateExtractor
         from env.action import ActionSpace
 
         self.state_extractor = StateExtractor()
         self.action_space = ActionSpace(K, M)
 
-        # Create collector
         self.collector = TrajectoryCollector(
             optimizer_class=optimizer_class,
             state_extractor=self.state_extractor,
             action_space=self.action_space,
             pop_size=pop_size,
             T=T,
-            seed=seed
+            seed=seed,
+            use_lpsr=use_lpsr,
+            min_pop_size=min_pop_size
         )
 
     def _get_pretrained_baselines(self) -> Dict[str, Callable]:
