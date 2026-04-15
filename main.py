@@ -45,7 +45,7 @@ def main():
     # Execute mode
     if args.mode == 'train' or args.mode == 'all':
         from model.qmamba import QMamba
-        from model.trainer import QMTrainer, TrainingConfig
+        from model.trainer import QMTrainer, AdaptiveCQLTrainer, TrainingConfig
         from data.bbob_suite import BBOBSuite
         from data.meta_dataset import EEDatasetBuilder, MetaDataLoader
         from algorithms.alg0 import Alg0Optimizer
@@ -145,10 +145,40 @@ def main():
             eval_interval=config.get('training', {}).get('eval_interval', 10),
             checkpoint_interval=config.get('training', {}).get('checkpoint_interval', 50),
             scheduler=config.get('training', {}).get('scheduler', 'none'),
-            algorithm=alg_type
+            algorithm=alg_type,
+            print_every=config.get('training', {}).get('print_every', 1)
         )
 
-        trainer = QMTrainer(model, train_config, device)
+        # Get adaptive CQL parameters from config
+        adaptive_cql_config = config.get('training', {}).get('adaptive_cql', {})
+        use_adaptive_cql = adaptive_cql_config.get('enabled', True)
+        lam_init = adaptive_cql_config.get('lam_init', config.get('training', {}).get('lam', 1.0))
+        lam_min = adaptive_cql_config.get('lam_min', 0.01)
+        lam_max = adaptive_cql_config.get('lam_max', 0.5)
+        optimism_threshold_high = adaptive_cql_config.get('optimism_threshold_high', 0.5)
+        optimism_threshold_low = adaptive_cql_config.get('optimism_threshold_low', 0.1)
+        dropout_p = adaptive_cql_config.get('dropout_p', 0.1)
+        uncertainty_samples = adaptive_cql_config.get('uncertainty_samples', 8)
+        uncertainty_interval = adaptive_cql_config.get('uncertainty_interval', 10)
+
+        if use_adaptive_cql:
+            print(f"  Using AdaptiveCQLTrainer with λ∈[{lam_min}, {lam_max}], init={lam_init}")
+            trainer = AdaptiveCQLTrainer(
+                model,
+                train_config,
+                device,
+                lam_init=lam_init,
+                lam_min=lam_min,
+                lam_max=lam_max,
+                optimism_threshold_high=optimism_threshold_high,
+                optimism_threshold_low=optimism_threshold_low,
+                dropout_p=dropout_p,
+                uncertainty_samples=uncertainty_samples,
+                uncertainty_interval=uncertainty_interval
+            )
+        else:
+            print(f"  Using QMTrainer (standard CQL)")
+            trainer = QMTrainer(model, train_config, device)
         history = trainer.fit(train_loader, val_loader, verbose=True)
 
         # Save history

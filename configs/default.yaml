@@ -18,7 +18,7 @@ state_action:
 
 # === Algorithm Configuration ===
 algorithm:
-  type: "Alg2"              # Alg0, Alg1, or Alg2
+  type: "Alg0"              # Alg0, Alg1, or Alg2
   pop_size: 20              # Population size
   use_lpsr: true            # Use Linear Population Size Reduction
   min_pop_size: 4           # Minimum population size for LPSR
@@ -32,10 +32,10 @@ model:
 
 # === Training Configuration ===
 training:
-  lr: 0.001                 # Learning rate 
+  lr: 0.001                 # Learning rate
   gamma: 0.99               # Discount factor
   beta: 10.0                # TD loss weight for final action
-  lam: 0.001                  # Conservative regularization coefficient (lower for faster learning)
+  lam: 0.001                # Conservative regularization coefficient (initial value for adaptive CQL)
   batch_size: 64            # Batch size
   n_epochs: 100             # Number of training epochs
   grad_clip: 0.5            # Gradient clipping
@@ -44,6 +44,16 @@ training:
   checkpoint_interval: 50   # Checkpoint saving interval
   print_every: 1           # Print every N steps (1=every step)
   scheduler: cosine         # Learning rate scheduler: cosine, step, or none
+  adaptive_cql:
+    enabled: true          # Enable adaptive CQL (if false, use standard QMTrainer)
+    lam_init: 0.001         # Initial λ value
+    lam_min: 0.01           # Minimum λ
+    lam_max: 0.5            # Maximum λ
+    optimism_threshold_high: 0.5  # Increase λ if optimism > this
+    optimism_threshold_low: 0.1   # Decrease λ if optimism < this
+    dropout_p: 0.1          # Dropout probability for uncertainty estimation
+    uncertainty_samples: 8    # Number of samples for uncertainty estimation
+    uncertainty_interval: 10   # Estimate uncertainty every N steps (for speed)
 
 # === Evaluation Configuration ===
 evaluation:

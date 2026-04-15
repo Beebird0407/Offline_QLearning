@@ -31,6 +31,7 @@ class TrainingConfig:
     checkpoint_interval: int = 50
     scheduler: str = 'none'  # 'none', 'cosine', or 'step'
     algorithm: str = 'Alg0'  # Algorithm type: Alg0, Alg1, or Alg2
+    print_every: int = 1  # Print every N steps
 
 
 class QMTrainer:
@@ -390,7 +391,8 @@ class AdaptiveCQLTrainer(QMTrainer):
         optimism_threshold_high: float = 0.5,
         optimism_threshold_low: float = 0.1,
         dropout_p: float = 0.1,
-        uncertainty_samples: int = 8
+        uncertainty_samples: int = 8,
+        uncertainty_interval: int = 10
     ):
         super().__init__(model, config, device)
 
@@ -403,11 +405,14 @@ class AdaptiveCQLTrainer(QMTrainer):
 
         self.dropout_p = dropout_p
         self.uncertainty_samples = uncertainty_samples
+        self.uncertainty_interval = uncertainty_interval
 
         self._q_optimism_ema = 0.0
         self._optimism_alpha = 0.1
         self._uncertainty_ema = None
         self._uncertainty_alpha = 0.1
+        self._cached_uncertainty = None
+        self._uncertainty_update_counter = 0
 
         self._set_dropout(True)
         self.history['lambda'] = []
@@ -421,26 +426,50 @@ class AdaptiveCQLTrainer(QMTrainer):
     def _estimate_uncertainty(
         self,
         states: torch.Tensor,
-        actions: torch.Tensor
+        actions: torch.Tensor,
+        force_update: bool = False
     ) -> torch.Tensor:
-        """Estimate Q-value uncertainty via dropout-induced variance."""
-        if self.uncertainty_samples <= 1:
-            return torch.zeros_like(actions, dtype=torch.float32, device=self.device)
+        """Estimate Q-value uncertainty via dropout-induced variance.
 
-        self._set_dropout(True)
-        q_samples = []
+        Only estimates every `uncertainty_interval` steps to reduce computation.
+        Returns cached estimate for intermediate steps.
+        """
+        B, T = states.shape[0], states.shape[1]
 
-        with torch.no_grad():
-            for _ in range(self.uncertainty_samples):
-                q = self.model(states, actions)
-                q_samples.append(q)
+        # Check if we should update
+        should_update = (self._uncertainty_update_counter % self.uncertainty_interval == 0) or force_update
 
-        # Compute variance across samples
-        q_stack = torch.stack(q_samples, dim=0)  # [S, B, T, K, M]
-        uncertainty = q_stack.var(dim=0).mean(dim=[-1])  # [B, T]
+        if should_update and self.uncertainty_samples > 1:
+            self._set_dropout(True)
+            q_samples = []
 
-        self._set_dropout(False)
-        return uncertainty
+            with torch.no_grad():
+                for _ in range(self.uncertainty_samples):
+                    q = self.model(states, actions)
+                    q_samples.append(q)
+
+            # Compute variance across samples: [S, B, T, K, M] -> [B, T]
+            q_stack = torch.stack(q_samples, dim=0)  # [S, B, T, K, M]
+            # Variance across sample dimension S, then mean across K and M
+            uncertainty = q_stack.var(dim=0).mean(dim=[-1]).mean(dim=[-1])  # [B, T]
+
+            self._set_dropout(False)
+
+            # Apply EMA smoothing
+            if self._cached_uncertainty is None:
+                self._cached_uncertainty = uncertainty
+            else:
+                self._cached_uncertainty = (
+                    (1 - self._uncertainty_alpha) * self._cached_uncertainty
+                    + self._uncertainty_alpha * uncertainty
+                )
+
+        self._uncertainty_update_counter += 1
+
+        if self._cached_uncertainty is None:
+            return torch.zeros(B, T, dtype=torch.float32, device=self.device)
+
+        return self._cached_uncertainty
 
     def _compute_adaptive_lambda(
         self,
@@ -455,7 +484,8 @@ class AdaptiveCQLTrainer(QMTrainer):
 
         optimism = (Q_max - Q_sel).detach()
 
-        valid_mask = mask.unsqueeze(-1) > 0.5
+        valid_mask = mask.unsqueeze(-1) > 0.5  # (B, T, 1)
+        valid_mask = valid_mask.expand(B, T, K)  # (B, T, K)
         optimism = optimism[valid_mask]
 
         if optimism.numel() == 0:
@@ -528,11 +558,6 @@ class AdaptiveCQLTrainer(QMTrainer):
 
         Q_sq = Q ** 2
 
-        actions_exp = actions.unsqueeze(-1).expand(B, T, K, M)
-        selected_mask = torch.zeros_like(Q, dtype=torch.bool)
-        for i in range(K):
-            selected_mask[:, :, i, :] = (actions[:, :, i:i+1] == torch.arange(M, device=actions.device)).transpose(0, 1)
-
         Q_sq_sum_all = Q_sq.sum(dim=-1)
         Q_sq_selected = torch.gather(Q_sq, dim=-1, index=actions.unsqueeze(-1)).squeeze(-1) ** 2
 
@@ -585,11 +610,15 @@ class AdaptiveCQLTrainer(QMTrainer):
         train_loader,
         val_loader=None,
         n_epochs: Optional[int] = None,
-        verbose: bool = True
+        verbose: bool = True,
+        print_every: int = 1
     ) -> Dict:
         """Full training loop with adaptive CQL."""
         if n_epochs is None:
             n_epochs = self.config.n_epochs
+
+        print_every_cfg = getattr(self.config, 'print_every', print_every)
+        print_step = max(1, print_every_cfg)
 
         os.makedirs(self.config.save_dir, exist_ok=True)
 
@@ -602,29 +631,73 @@ class AdaptiveCQLTrainer(QMTrainer):
             print(f"  β={self.config.beta}, γ={self.config.gamma}")
             print(f"  λ adaptive: [{self.lam_min}, {self.lam_max}], init={self.lam_init}")
             print(f"  Optimism thresholds: [{self.optimism_threshold_low}, {self.optimism_threshold_high}]")
-            print(f"  Uncertainty samples: {self.uncertainty_samples}")
+            print(f"  Uncertainty samples: {self.uncertainty_samples}, interval: {self.uncertainty_interval}")
+            print(f"  Print every: {print_step} step(s)")
             print(f"{'='*60}\n")
+
+        steps_per_epoch = len(train_loader)
+        total_steps = n_epochs * steps_per_epoch
+
+        import time
+        step_times = []
+
+        if verbose:
+            print("Warming up CUDA...")
+            print("-" * 60, flush=True)
+        dummy_batch = train_loader.sample_batch()
+        _ = self.train_step(dummy_batch)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        if verbose:
+            print("Warmup done, starting training.\n" + "=" * 60 + "\n", flush=True)
 
         for epoch in range(self.epoch + 1, self.epoch + n_epochs + 1):
             self.epoch = epoch
+            epoch_start = time.time()
+            epoch_losses = {'total': [], 'td': [], 'cql': []}
 
-            # Train
-            train_metrics = self.train_epoch(train_loader)
+            for step_idx, batch in enumerate(train_loader):
+                step_start = time.time()
+                losses = self.train_step(batch)
+                epoch_losses['total'].append(losses['total'])
+                epoch_losses['td'].append(losses['td'])
+                epoch_losses['cql'].append(losses['cql'])
 
-            # Evaluate
+                step_time = time.time() - step_start
+                step_times.append(step_time)
+
+                global_step = (epoch - 1) * steps_per_epoch + step_idx + 1
+                if verbose and global_step % print_step == 0:
+                    avg_step_time = np.mean(step_times[-100:]) if step_times else 0
+                    eta_seconds = avg_step_time * (total_steps - global_step)
+                    eta_str = ""
+                    if eta_seconds > 60:
+                        eta_str = f" | ETA: {eta_seconds/60:.1f}min"
+                    elif eta_seconds > 0:
+                        eta_str = f" | ETA: {eta_seconds:.0f}s"
+
+                    lr = self.optimizer.param_groups[0]['lr']
+                    print(f"Step[{global_step:5d}/{total_steps}] "
+                          f"Loss={losses['total']:.4f} "
+                          f"(TD={losses['td']:.4f}, CQL={losses['cql']:.4f}) "
+                          f"| λ={self.lam:.4f}{eta_str}", flush=True)
+
+            train_metrics = {k: float(np.mean(v)) for k, v in epoch_losses.items()}
+            epoch_time = time.time() - epoch_start
+
             val_metrics = None
-            if val_loader is not None and epoch % self.config.eval_interval == 0:
+            if val_loader is not None and epoch % max(1, self.config.eval_interval // 10) == 0:
                 val_metrics = self.evaluate(val_loader)
 
-            # Print progress
             if verbose and epoch % self.config.eval_interval == 0:
                 lr = self.optimizer.param_groups[0]['lr']
                 msg = f"Epoch[{epoch:3d}/{n_epochs}] "
-                msg += f"Train: {train_metrics['total']:.4f} (TD={train_metrics['td']:.4f}, CQL={train_metrics['cql']:.4f})"
+                msg += f"Avg Loss: {train_metrics['total']:.4f} "
+                msg += f"(TD={train_metrics['td']:.4f}, CQL={train_metrics['cql']:.4f})"
                 msg += f" | λ={self.lam:.4f}"
                 if val_metrics:
                     msg += f" | Val: {val_metrics['total']:.4f}"
-                msg += f" | LR: {lr:.2e}"
+                msg += f" | Time: {epoch_time:.1f}s | LR: {lr:.2e}"
                 print(msg)
 
             # Save checkpoint
@@ -636,6 +709,9 @@ class AdaptiveCQLTrainer(QMTrainer):
                 self.best_loss = train_metrics['total']
                 self.save_checkpoint('best.pth')
 
+            if self.scheduler is not None:
+                self.scheduler.step()
+
         # Final save
         self.save_checkpoint('final.pth')
 
@@ -645,7 +721,9 @@ class AdaptiveCQLTrainer(QMTrainer):
             json.dump(self.history, f, indent=2)
 
         if verbose:
+            avg_step = np.mean(step_times) if step_times else 0
             print(f"\nTraining complete! Best loss: {self.best_loss:.4f}")
             print(f"Lambda range: [{min(self.history['lambda'])}, {max(self.history['lambda'])}]")
+            print(f"Avg step time: {avg_step*1000:.1f}ms | Total time: {np.sum(step_times)/60:.1f}min")
 
         return self.history
