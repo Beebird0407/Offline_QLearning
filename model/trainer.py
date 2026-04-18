@@ -75,6 +75,7 @@ class QMTrainer:
             'total_loss': [],
             'td_loss': [],
             'cql_loss': [],
+            'val_loss': [],
             'lr': []
         }
         self.best_loss = float('inf')
@@ -232,15 +233,11 @@ class QMTrainer:
             print(f"  β={self.config.beta}, λ={self.config.lam}, γ={self.config.gamma}")
             print(f"  Backend: {'Mamba' if self.model.uses_mamba else 'GRU (fallback)'}")
             print(f"  Parameters: {self.model.num_parameters:,}")
-            print(f"  Print every: {print_every} step(s)")
+            print(f"  Print every: {print_every} epoch(s)")
             print(f"{'='*60}\n")
 
-        steps_per_epoch = len(train_loader)
-        total_steps = n_epochs * steps_per_epoch
-        print_step = max(1, print_every)
-
         import time
-        step_times = []
+        total_time = 0
 
         if verbose:
             print("Warming up CUDA...")
@@ -257,40 +254,24 @@ class QMTrainer:
             epoch_start = time.time()
             epoch_losses = {'total': [], 'td': [], 'cql': []}
 
-            for step_idx, batch in enumerate(train_loader):
-                step_start = time.time()
+            for _, batch in enumerate(train_loader):
                 losses = self.train_step(batch)
                 epoch_losses['total'].append(losses['total'])
                 epoch_losses['td'].append(losses['td'])
                 epoch_losses['cql'].append(losses['cql'])
 
-                step_time = time.time() - step_start
-                step_times.append(step_time)
-
-                global_step = (epoch - 1) * steps_per_epoch + step_idx + 1
-                if verbose and global_step % print_step == 0:
-                    avg_step_time = np.mean(step_times[-100:]) if step_times else 0
-                    eta_seconds = avg_step_time * (total_steps - global_step)
-                    eta_str = ""
-                    if eta_seconds > 60:
-                        eta_str = f" | ETA: {eta_seconds/60:.1f}min"
-                    elif eta_seconds > 0:
-                        eta_str = f" | ETA: {eta_seconds:.0f}s"
-
-                    lr = self.optimizer.param_groups[0]['lr']
-                    print(f"Step[{global_step:5d}/{total_steps}] "
-                          f"Loss={losses['total']:.4f} "
-                          f"(TD={losses['td']:.4f}, CQL={losses['cql']:.4f}) "
-                          f"| LR: {lr:.2e}{eta_str}", flush=True)
-
             train_metrics = {k: float(np.mean(v)) for k, v in epoch_losses.items()}
             epoch_time = time.time() - epoch_start
+            total_time += epoch_time
 
             val_metrics = None
-            if val_loader is not None and epoch % max(1, self.config.eval_interval // 10) == 0:
+            if val_loader is not None and epoch % self.config.eval_interval == 0:
                 val_metrics = self.evaluate(val_loader)
 
-            if verbose and epoch % self.config.eval_interval == 0:
+            # Track val_loss in history
+            self.history['val_loss'].append(val_metrics['total'] if val_metrics else None)
+
+            if verbose:
                 lr = self.optimizer.param_groups[0]['lr']
                 msg = f"Epoch[{epoch:3d}/{n_epochs}] "
                 msg += f"Avg Loss: {train_metrics['total']:.4f} "
@@ -312,14 +293,17 @@ class QMTrainer:
 
         self.save_checkpoint('final.pth')
 
+        # Add training summary to history
+        self.history['training_time_minutes'] = float(total_time / 60)
+        self.history['best_loss'] = float(self.best_loss)
+
         history_path = os.path.join(self.config.save_dir, 'history.json')
         with open(history_path, 'w') as f:
             json.dump(self.history, f, indent=2)
 
         if verbose:
-            avg_step = np.mean(step_times) if step_times else 0
             print(f"\nTraining complete! Best loss: {self.best_loss:.4f}")
-            print(f"Avg step time: {avg_step*1000:.1f}ms | Total time: {np.sum(step_times)/60:.1f}min")
+            print(f"Total time: {total_time/60:.1f}min")
 
         return self.history
 
@@ -618,13 +602,13 @@ class AdaptiveCQLTrainer(QMTrainer):
             n_epochs = self.config.n_epochs
 
         print_every_cfg = getattr(self.config, 'print_every', print_every)
-        print_step = max(1, print_every_cfg)
 
         os.makedirs(self.config.save_dir, exist_ok=True)
 
         if verbose:
             print(f"\n{'='*60}")
             print(f"  Adaptive CQL Training")
+            print(f"  Algorithm: {self.config.algorithm}")
             print(f"  Device: {self.device}")
             print(f"  Epochs: {n_epochs}")
             print(f"  Batch size: {self.config.batch_size}")
@@ -632,14 +616,11 @@ class AdaptiveCQLTrainer(QMTrainer):
             print(f"  λ adaptive: [{self.lam_min}, {self.lam_max}], init={self.lam_init}")
             print(f"  Optimism thresholds: [{self.optimism_threshold_low}, {self.optimism_threshold_high}]")
             print(f"  Uncertainty samples: {self.uncertainty_samples}, interval: {self.uncertainty_interval}")
-            print(f"  Print every: {print_step} step(s)")
+            print(f"  Print every: {print_every_cfg} epoch(s)")
             print(f"{'='*60}\n")
 
-        steps_per_epoch = len(train_loader)
-        total_steps = n_epochs * steps_per_epoch
-
         import time
-        step_times = []
+        total_time = 0
 
         if verbose:
             print("Warming up CUDA...")
@@ -656,40 +637,24 @@ class AdaptiveCQLTrainer(QMTrainer):
             epoch_start = time.time()
             epoch_losses = {'total': [], 'td': [], 'cql': []}
 
-            for step_idx, batch in enumerate(train_loader):
-                step_start = time.time()
+            for _, batch in enumerate(train_loader):
                 losses = self.train_step(batch)
                 epoch_losses['total'].append(losses['total'])
                 epoch_losses['td'].append(losses['td'])
                 epoch_losses['cql'].append(losses['cql'])
 
-                step_time = time.time() - step_start
-                step_times.append(step_time)
-
-                global_step = (epoch - 1) * steps_per_epoch + step_idx + 1
-                if verbose and global_step % print_step == 0:
-                    avg_step_time = np.mean(step_times[-100:]) if step_times else 0
-                    eta_seconds = avg_step_time * (total_steps - global_step)
-                    eta_str = ""
-                    if eta_seconds > 60:
-                        eta_str = f" | ETA: {eta_seconds/60:.1f}min"
-                    elif eta_seconds > 0:
-                        eta_str = f" | ETA: {eta_seconds:.0f}s"
-
-                    lr = self.optimizer.param_groups[0]['lr']
-                    print(f"Step[{global_step:5d}/{total_steps}] "
-                          f"Loss={losses['total']:.4f} "
-                          f"(TD={losses['td']:.4f}, CQL={losses['cql']:.4f}) "
-                          f"| λ={self.lam:.4f}{eta_str}", flush=True)
-
             train_metrics = {k: float(np.mean(v)) for k, v in epoch_losses.items()}
             epoch_time = time.time() - epoch_start
+            total_time += epoch_time
 
             val_metrics = None
-            if val_loader is not None and epoch % max(1, self.config.eval_interval // 10) == 0:
+            if val_loader is not None and epoch % self.config.eval_interval == 0:
                 val_metrics = self.evaluate(val_loader)
 
-            if verbose and epoch % self.config.eval_interval == 0:
+            # Track val_loss in history
+            self.history['val_loss'].append(val_metrics['total'] if val_metrics else None)
+
+            if verbose:
                 lr = self.optimizer.param_groups[0]['lr']
                 msg = f"Epoch[{epoch:3d}/{n_epochs}] "
                 msg += f"Avg Loss: {train_metrics['total']:.4f} "
@@ -715,15 +680,18 @@ class AdaptiveCQLTrainer(QMTrainer):
         # Final save
         self.save_checkpoint('final.pth')
 
+        # Add training summary to history
+        self.history['training_time_minutes'] = float(total_time / 60)
+        self.history['best_loss'] = float(self.best_loss)
+
         # Save history
         history_path = os.path.join(self.config.save_dir, 'history.json')
         with open(history_path, 'w') as f:
             json.dump(self.history, f, indent=2)
 
         if verbose:
-            avg_step = np.mean(step_times) if step_times else 0
             print(f"\nTraining complete! Best loss: {self.best_loss:.4f}")
             print(f"Lambda range: [{min(self.history['lambda'])}, {max(self.history['lambda'])}]")
-            print(f"Avg step time: {avg_step*1000:.1f}ms | Total time: {np.sum(step_times)/60:.1f}min")
+            print(f"Total time: {total_time/60:.1f}min")
 
         return self.history

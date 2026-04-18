@@ -34,7 +34,9 @@ class Alg1Optimizer:
         dim: int,
         bounds: np.ndarray,
         pop_size: int = 20,
-        seed: int = 42
+        seed: int = 42,
+        use_lpsr: bool = True,  # Not used but accepted for API consistency
+        min_pop_size: int = 4    # Not used but accepted for API consistency
     ):
         self.dim = dim
         self.bounds = bounds

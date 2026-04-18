@@ -66,10 +66,17 @@ def main():
         )
 
         K = config.get('state_action', {}).get('K', 3)
+        # Override K based on algorithm type (Alg0=3, Alg1=10, Alg2=16)
+        alg_K_map = {'Alg0': 3, 'Alg1': 10, 'Alg2': 16}
+        K = alg_K_map.get(alg_type, K)
         M = config.get('state_action', {}).get('M', 16)
         pop_size = config.get('algorithm', {}).get('pop_size', 20)
         use_lpsr = config.get('algorithm', {}).get('use_lpsr', True)
         min_pop_size = config.get('algorithm', {}).get('min_pop_size', 4)
+
+        # Dataset path includes algorithm type for separate datasets per algorithm
+        base_dataset_path = config.get('paths', {}).get('dataset_path', './data/ee_dataset.pkl')
+        dataset_path = base_dataset_path.replace('.pkl', f'_{alg_type}.pkl')
 
         builder = EEDatasetBuilder(
             bbob_suite=bbob_suite,
@@ -84,15 +91,30 @@ def main():
             min_pop_size=min_pop_size
         )
 
-        dataset_path = config.get('paths', {}).get('dataset_path', './data/ee_dataset.pkl')
         os.makedirs(os.path.dirname(dataset_path), exist_ok=True)
 
         # Load existing dataset if available
         if os.path.exists(dataset_path):
-            print(f"  Loading existing dataset from {dataset_path}")
-            train_trajs, val_trajs, _ = EEDatasetBuilder.load_dataset(dataset_path)
+            print(f"  Loading existing dataset for {alg_type} from {dataset_path}")
+            train_trajs, val_trajs, dataset_config = EEDatasetBuilder.load_dataset(dataset_path)
+
+            # Validate algorithm matches
+            dataset_alg = dataset_config.get('algorithm', '')
+            # Extract Alg0/Alg1/Alg2 from full class name like "Alg0Optimizer"
+            dataset_alg_type = dataset_alg.replace('Optimizer', '') if dataset_alg else ''
+
+            if dataset_alg_type != alg_type:
+                print(f"  [WARNING] Dataset algorithm ({dataset_alg_type}) does not match config ({alg_type})")
+                print(f"  [WARNING] Dataset will be rebuilt for {alg_type}...")
+                print(f"  To use existing dataset, change algorithm.type in config to '{dataset_alg_type}'")
+                train_trajs, val_trajs = builder.build(
+                    n_total=config.get('dataset', {}).get('n_total_trajectories', 10000),
+                    save_path=dataset_path
+                )
+            else:
+                print(f"  Dataset validated: algorithm={dataset_alg_type}, dim={dataset_config.get('dim')}, K={dataset_config.get('K')}")
         else:
-            print(f"  Building new dataset...")
+            print(f"  Building new dataset for {alg_type}...")
             train_trajs, val_trajs = builder.build(
                 n_total=config.get('dataset', {}).get('n_total_trajectories', 10000),
                 save_path=dataset_path

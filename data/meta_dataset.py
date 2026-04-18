@@ -189,6 +189,9 @@ class EEDatasetBuilder:
         """Save dataset to pickle file."""
         Path(path).parent.mkdir(parents=True, exist_ok=True)
 
+        # Get algorithm name from class
+        alg_name = self.optimizer_class.__name__ if hasattr(self.optimizer_class, '__name__') else str(self.optimizer_class)
+
         dataset = {
             'train': [t.to_dict() for t in train_trajs],
             'val': [t.to_dict() for t in val_trajs],
@@ -200,6 +203,7 @@ class EEDatasetBuilder:
                 'T': self.T,
                 'mu': self.mu,
                 'dim': self.bbob_suite.dim,
+                'algorithm': alg_name,
             }
         }
 
@@ -293,9 +297,8 @@ class MetaDataLoader:
         }
 
     def __len__(self) -> int:
-        """Number of batches per epoch (at least 1)."""
-        # Each batch samples with replacement, so we can always generate batches
-        return max(1, len(self.trajectories))
+        """Number of batches per epoch."""
+        return 8  
 
     def __iter__(self):
         """Iterate over fixed number of batches (one epoch)."""

@@ -44,7 +44,9 @@ class Alg2Optimizer:
         dim: int,
         bounds: np.ndarray,
         pop_size: int = 20,
-        seed: int = 42
+        seed: int = 42,
+        use_lpsr: bool = True,  # Not used but accepted for API consistency
+        min_pop_size: int = 4    # Not used but accepted for API consistency
     ):
         self.dim = dim
         self.bounds = bounds
@@ -147,7 +149,7 @@ class Alg2Optimizer:
                     mutant[i] += delta * (xu - x[i])
         return np.clip(mutant, self.bounds[:, 0], self.bounds[:, 1])
 
-    def _evolve_sg1(self, pop: np.ndarray, fitness: np.ndarray, params: dict) -> Tuple[np.ndarray, np.ndarray]:
+    def _evolve_sg1(self, pop: np.ndarray, fitness: np.ndarray, params: dict, func: Callable) -> Tuple[np.ndarray, np.ndarray]:
         """Evolve subgroup 1: MPX + Polynomial."""
         new_pop = pop.copy()
         new_fit = fitness.copy()
@@ -164,7 +166,7 @@ class Alg2Optimizer:
             c1 = self._polynomial_mutation(c1, params['sg1_eta'])
 
             # Selection
-            f_c1 = func(c1) if 'func' in dir() else None
+            f_c1 = func(c1)
             if f_c1 <= fitness[i]:
                 new_pop[i] = c1
                 new_fit[i] = f_c1
@@ -380,7 +382,7 @@ class Alg2Optimizer:
         new_pop, new_fit = pop.copy(), fitness.copy()
 
         # Evolve each subgroup
-        new_pop, new_fit = self._evolve_sg1(new_pop, new_fit, params)
+        new_pop, new_fit = self._evolve_sg1(new_pop, new_fit, params, func)
         new_pop, new_fit = self._evolve_sg2(new_pop, new_fit, params, func)
         new_pop, new_fit = self._evolve_sg3(new_pop, new_fit, params, func)
         new_pop, new_fit = self._evolve_sg4(new_pop, new_fit, params, func)

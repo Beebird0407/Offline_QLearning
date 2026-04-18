@@ -18,7 +18,7 @@ state_action:
 
 # === Algorithm Configuration ===
 algorithm:
-  type: "Alg0"              # Alg0, Alg1, or Alg2
+  type: "Alg2"              # Alg0, Alg1, or Alg2
   pop_size: 20              # Population size
   use_lpsr: true            # Use Linear Population Size Reduction
   min_pop_size: 4           # Minimum population size for LPSR
@@ -35,19 +35,19 @@ training:
   lr: 0.001                 # Learning rate
   gamma: 0.99               # Discount factor
   beta: 10.0                # TD loss weight for final action
-  lam: 0.001                # Conservative regularization coefficient (initial value for adaptive CQL)
-  batch_size: 64            # Batch size
-  n_epochs: 100             # Number of training epochs
+  lam: 0.001                # Conservative regularization coefficient
+  batch_size: 16            # Batch size
+  n_epochs: 30            # Number of training epochs
   grad_clip: 0.5            # Gradient clipping
   weight_decay: 0.0001      # Weight decay
   eval_interval: 10         # Evaluation interval (epochs)
   checkpoint_interval: 50   # Checkpoint saving interval
-  print_every: 1           # Print every N steps (1=every step)
+  print_every: 1           # Print every N epochs
   scheduler: cosine         # Learning rate scheduler: cosine, step, or none
   adaptive_cql:
     enabled: true          # Enable adaptive CQL (if false, use standard QMTrainer)
     lam_init: 0.001         # Initial λ value
-    lam_min: 0.01           # Minimum λ
+    lam_min: 0.0005           # Minimum λ
     lam_max: 0.5            # Maximum λ
     optimism_threshold_high: 0.5  # Increase λ if optimism > this
     optimism_threshold_low: 0.1   # Decrease λ if optimism < this
