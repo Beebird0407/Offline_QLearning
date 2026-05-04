@@ -1,12 +1,7 @@
-"""Q-Mamba: Offline Meta Black-Box Optimization."""
-
 import argparse
 import yaml
 import os
 import sys
-
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 
 def main():
@@ -58,11 +53,12 @@ def main():
         OptimizerClass = alg_map.get(alg_type, Alg0Optimizer)
 
         # Build dataset
-        print("\n[1/4] Building E&E dataset...")
+        print("\n[1/3] Building E&E dataset...")
         bbob_suite = BBOBSuite(
             dim=config.get('dataset', {}).get('dim', 5),
-            train_instances=config.get('dataset', {}).get('train_instances', 16),
-            test_instances=config.get('dataset', {}).get('test_instances', 8)
+            n_train_instances=config.get('dataset', {}).get('train_instances', 1),
+            n_test_instances=config.get('dataset', {}).get('test_instances', 1),
+            seed=config.get('dataset', {}).get('seed', 42)
         )
 
         K = config.get('state_action', {}).get('K', 3)
@@ -78,6 +74,8 @@ def main():
         base_dataset_path = config.get('paths', {}).get('dataset_path', './data/ee_dataset.pkl')
         dataset_path = base_dataset_path.replace('.pkl', f'_{alg_type}.pkl')
 
+        seed = config.get('dataset', {}).get('seed', 42)
+
         builder = EEDatasetBuilder(
             bbob_suite=bbob_suite,
             optimizer_class=OptimizerClass,
@@ -85,8 +83,8 @@ def main():
             M=M,
             pop_size=pop_size,
             mu=config.get('dataset', {}).get('mu', 0.5),
-            T=config.get('dataset', {}).get('trajectory_length', 500),
-            seed=42,
+            T=config.get('dataset', {}).get('trajectory_length', 100),
+            seed=seed,
             use_lpsr=use_lpsr,
             min_pop_size=min_pop_size
         )
@@ -117,27 +115,32 @@ def main():
             print(f"  Building new dataset for {alg_type}...")
             train_trajs, val_trajs = builder.build(
                 n_total=config.get('dataset', {}).get('n_total_trajectories', 10000),
-                save_path=dataset_path
+                save_path=dataset_path,
+                n_workers=config.get('dataset', {}).get('n_workers', None),
             )
 
         # Create data loaders
+        T_max = config.get('dataset', {}).get('trajectory_length', 100)
         train_loader = MetaDataLoader(
             train_trajs,
-            batch_size=config.get('training', {}).get('batch_size', 64),
-            K=K
+            batch_size=config.get('training', {}).get('batch_size', 32),
+            K=K,
+            T_max=T_max
         )
         val_loader = MetaDataLoader(
             val_trajs,
-            batch_size=config.get('training', {}).get('batch_size', 64),
-            K=K
+            batch_size=config.get('training', {}).get('batch_size', 32),
+            K=K,
+            T_max=T_max
         )
 
         # Create model
-        print("\n[2/4] Creating Q-Mamba model...")
+        print("\n[2/3] Creating Q-Mamba model...")
         state_dim = config.get('state_action', {}).get('state_dim', 9)
-        d_model = config.get('model', {}).get('d_model', 128)
-        d_state = config.get('model', {}).get('d_state', 16)
+        d_model = config.get('model', {}).get('d_model', 14)
+        d_state = config.get('model', {}).get('d_state', 32)
         n_layers = config.get('model', {}).get('n_layers', 1)
+        num_hidden_mlp = config.get('model', {}).get('num_hidden_mlp', 32)
 
         model = QMamba(
             state_dim=state_dim,
@@ -145,22 +148,23 @@ def main():
             M=M,
             d_model=d_model,
             d_state=d_state,
-            n_layers=n_layers
+            n_layers=n_layers,
+            num_hidden_mlp=num_hidden_mlp
         )
 
         print(f"  Model parameters: {model.num_parameters:,}")
         print(f"  Backend: {'Mamba' if model.uses_mamba else 'GRU (fallback)'}")
 
         # Train
-        print("\n[3/4] Training...")
+        print("\n[3/3] Training...")
         train_config = TrainingConfig(
-            lr=config.get('training', {}).get('lr', 5e-3),
+            lr=config.get('training', {}).get('lr', 0.001),
             gamma=config.get('training', {}).get('gamma', 0.99),
             beta=config.get('training', {}).get('beta', 10.0),
             lam=config.get('training', {}).get('lam', 1.0),
-            batch_size=config.get('training', {}).get('batch_size', 64),
-            n_epochs=config.get('training', {}).get('n_epochs', 300),
-            grad_clip=config.get('training', {}).get('grad_clip', 0.5),
+            batch_size=config.get('training', {}).get('batch_size', 32),
+            n_epochs=config.get('training', {}).get('n_epochs', 100),
+            grad_clip=config.get('training', {}).get('grad_clip', 100.0),
             weight_decay=config.get('training', {}).get('weight_decay', 1e-4),
             device=device,
             save_dir=config.get('paths', {}).get('checkpoint_dir', './checkpoints'),
@@ -168,17 +172,16 @@ def main():
             checkpoint_interval=config.get('training', {}).get('checkpoint_interval', 50),
             scheduler=config.get('training', {}).get('scheduler', 'none'),
             algorithm=alg_type,
-            print_every=config.get('training', {}).get('print_every', 1)
+            print_every=config.get('training', {}).get('print_every', 1),
+            seed=seed
         )
 
         # Get adaptive CQL parameters from config
         adaptive_cql_config = config.get('training', {}).get('adaptive_cql', {})
-        use_adaptive_cql = adaptive_cql_config.get('enabled', True)
+        use_adaptive_cql = adaptive_cql_config.get('enabled', False)
         lam_init = adaptive_cql_config.get('lam_init', config.get('training', {}).get('lam', 1.0))
         lam_min = adaptive_cql_config.get('lam_min', 0.01)
-        lam_max = adaptive_cql_config.get('lam_max', 0.5)
-        optimism_threshold_high = adaptive_cql_config.get('optimism_threshold_high', 0.5)
-        optimism_threshold_low = adaptive_cql_config.get('optimism_threshold_low', 0.1)
+        lam_max = adaptive_cql_config.get('lam_max', 2.0)
         dropout_p = adaptive_cql_config.get('dropout_p', 0.1)
         uncertainty_samples = adaptive_cql_config.get('uncertainty_samples', 8)
         uncertainty_interval = adaptive_cql_config.get('uncertainty_interval', 10)
@@ -192,8 +195,6 @@ def main():
                 lam_init=lam_init,
                 lam_min=lam_min,
                 lam_max=lam_max,
-                optimism_threshold_high=optimism_threshold_high,
-                optimism_threshold_low=optimism_threshold_low,
                 dropout_p=dropout_p,
                 uncertainty_samples=uncertainty_samples,
                 uncertainty_interval=uncertainty_interval
@@ -201,71 +202,7 @@ def main():
         else:
             print(f"  Using QMTrainer (standard CQL)")
             trainer = QMTrainer(model, train_config, device)
-        history = trainer.fit(train_loader, val_loader, verbose=True)
-
-        # Save history
-        results_dir = config.get('paths', {}).get('results_dir', './results')
-        os.makedirs(results_dir, exist_ok=True)
-
-        from utils.visualization import plot_training_curves
-        plot_training_curves(
-            history,
-            save_path=os.path.join(results_dir, 'training_curves.png'),
-            show=False
-        )
-        print(f"\n  Training curves saved to {results_dir}/training_curves.png")
-
-    if args.mode == 'eval' or args.mode == 'all':
-        from model.agent import QMAgent
-        from utils.evaluation import benchmark_in_distribution
-        from data.bbob_suite import BBOBSuite
-
-        checkpoint_path = args.checkpoint or config.get('paths', {}).get('checkpoint_dir', './checkpoints') + '/best.pth'
-
-        if not os.path.exists(checkpoint_path):
-            print(f"Checkpoint not found: {checkpoint_path}")
-            print("Please train a model first or provide --checkpoint")
-            return
-
-        print(f"\n[4/4] Evaluating on BBOB test set...")
-        agent = QMAgent.from_checkpoint(checkpoint_path, device=device)
-
-        bbob_suite = BBOBSuite(
-            dim=config.get('dataset', {}).get('dim', 5),
-            test_instances=config.get('dataset', {}).get('test_instances', 8)
-        )
-
-        results = benchmark_in_distribution(
-            agent=agent,
-            bbob_suite=bbob_suite,
-            n_runs=config.get('evaluation', {}).get('n_runs', 19),
-            pop_size=config.get('algorithm', {}).get('pop_size', 20),
-            T=config.get('dataset', {}).get('trajectory_length', 500)
-        )
-
-        # Save results
-        results_dir = config.get('paths', {}).get('results_dir', './results')
-        os.makedirs(results_dir, exist_ok=True)
-
-        from utils.visualization import save_results, plot_convergence
-        save_results(results, os.path.join(results_dir, 'evaluation_results.json'))
-
-        # Plot convergence curves
-        convergence_data = {}
-        for name, res in results['results'].items():
-            if 'convergence_curve' in res:
-                convergence_data[name] = [res['convergence_curve']]
-
-        if convergence_data:
-            plot_convergence(
-                convergence_data,
-                save_path=os.path.join(results_dir, 'convergence_curves.png'),
-                show=False,
-                title='BBOB Test Set Convergence'
-            )
-
-        print(f"\n  Results saved to {results_dir}/")
-        print(f"  Mean Performance: {results['summary']['mean_performance']:.4f} ± {results['summary']['std_performance']:.4f}")
+        trainer.fit(train_loader, val_loader, verbose=True)
 
     if args.mode == 'ablation':
         print("\n[Ablation Study]")

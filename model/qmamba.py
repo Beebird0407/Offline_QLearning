@@ -1,5 +1,3 @@
-"""Q-Mamba: Mamba-based Q-Learner for Black-Box Optimization."""
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -55,9 +53,11 @@ class RunningNorm(nn.Module):
 class MambaBlock(nn.Module):
     """Mamba SSM block with residual connection."""
 
-    def __init__(self, d_model: int, d_state: int = 16, d_conv: int = 4, expand: int = 2):
+    def __init__(self, d_model: int, d_state: int = 16, d_conv: int = 4, expand: int = 2, force_gru: bool = False):
         super().__init__()
-        if _MAMBA_AVAILABLE:
+        self._force_gru = force_gru
+
+        if _MAMBA_AVAILABLE and not force_gru:
             self.ssm = Mamba(
                 d_model=d_model,
                 d_state=d_state,
@@ -78,7 +78,7 @@ class MambaBlock(nn.Module):
         self.norm = nn.LayerNorm(d_model)
 
     def forward(self, x: torch.Tensor, h: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        if self._use_mamba:
+        if self._use_mamba and not self._force_gru:
             out = self.ssm(x)
             out = self.norm(out + x)
             return out, None
@@ -94,31 +94,36 @@ class QMamba(nn.Module):
         state_dim: int = 9,
         K: int = 3,
         M: int = 16,
-        d_model: int = 128,
-        d_state: int = 16,
-        n_layers: int = 1
+        d_model: int = 14,
+        d_state: int = 32,
+        n_layers: int = 1,
+        num_hidden_mlp: int = 32,
+        force_cpu: bool = False
     ):
         super().__init__()
         self.state_dim = state_dim
         self.K = K
         self.M = M
         self.d_model = d_model
+        self.d_state = d_state
+        self.force_cpu = force_cpu
         self.token_dim = 5
+        self.num_hidden_mlp = num_hidden_mlp
 
         inp_dim = state_dim + self.token_dim
+        self.inp_dim = inp_dim
         self.state_norm = RunningNorm(state_dim)
         self.token_embed = nn.Embedding(M + 1, self.token_dim)
-        self.input_proj = nn.Linear(inp_dim, d_model)
         self.mamba_layers = nn.ModuleList([
-            MambaBlock(d_model, d_state) for _ in range(n_layers)
+            MambaBlock(d_model, d_state, force_gru=force_cpu) for _ in range(n_layers)
         ])
+        # Q-head: match Q-Mamba-main DAC_block structure
+        # Linear(14, 32) → LeakyReLU → Linear(32, 16)
         self.q_heads = nn.ModuleList([
             nn.Sequential(
-                nn.Linear(d_model + inp_dim, d_model),
+                nn.Linear(d_model + inp_dim, num_hidden_mlp),
                 nn.LeakyReLU(0.01),
-                nn.Linear(d_model, d_model // 2),
-                nn.LeakyReLU(0.01),
-                nn.Linear(d_model // 2, M)
+                nn.Linear(num_hidden_mlp, M)
             )
             for _ in range(K)
         ])
@@ -138,7 +143,7 @@ class QMamba(nn.Module):
         B = s_t.shape[0]
         prev_tok_emb = self.token_embed(prev_token)
         inp = torch.cat([s_t, prev_tok_emb], dim=-1)
-        x = self.input_proj(inp).unsqueeze(1)
+        x = inp.unsqueeze(1)  # (B, 1, d_model) where d_model = inp_dim
         for mamba_layer in self.mamba_layers:
             x, h = mamba_layer(x, h)
         x = x.squeeze(1)
@@ -151,36 +156,45 @@ class QMamba(nn.Module):
         actions: torch.Tensor,
         return_all_q: bool = False
     ) -> torch.Tensor:
-        """Forward pass over a batch of sequences."""
+
         B, T, _ = states.shape
         s_flat = self.state_norm(states.reshape(B * T, -1))
-        states = s_flat.reshape(B, T, -1)
+        states = s_flat.reshape(B, T, -1)  # (B, T, state_dim)
 
         Q_all = torch.zeros(B, T, self.K, self.M, device=states.device)
-        h = None
 
-        for t in range(T):
-            s_t = states[:, t]
-            prev_token = self._get_start_token(B, states.device)
+        # Vectorized: process all T timesteps at once per action dimension
+        # Autoregressive dependency is across K (actions), not T (timesteps)
+        prev_tokens = self._get_start_token(B, states.device).unsqueeze(1).expand(B, T)  # (B, T)
 
-            for i in range(self.K):
-                q_inp, h = self._forward_one_step(s_t, prev_token, h)
-                q_i = self.q_heads[i](q_inp)
+        for i in range(self.K):
+            # Build full-sequence input: (B, T, state_dim + token_dim)
+            tok_emb = self.token_embed(prev_tokens)  # (B, T, token_dim)
+            inp = torch.cat([states, tok_emb], dim=-1)  # (B, T, inp_dim)
 
-                q_min = q_i.min(-1, keepdim=True).values
-                q_max = q_i.max(-1, keepdim=True).values
-                q_i = (q_i - q_min) / (q_max - q_min + 1e-8)
+            # Single Mamba/GRU pass over full T-length sequence
+            x = inp  # (B, T, d_model)
+            for mamba_layer in self.mamba_layers:
+                x, _ = mamba_layer(x)
+            # Residual already inside MambaBlock
 
-                Q_all[:, t, i] = q_i
+            # Q-head for action dimension i
+            q_inp = torch.cat([x, inp], dim=-1)  # (B, T, d_model + inp_dim)
+            q_i = self.q_heads[i](q_inp)  # (B, T, M)
 
-                if i < self.K - 1:
-                    if actions is not None:
-                        prev_token = actions[:, t, i]
-                    else:
-                        prev_token = q_i.argmax(-1)
+            # Min-max normalize per (b, t)
+            q_min = q_i.min(-1, keepdim=True).values
+            q_max = q_i.max(-1, keepdim=True).values
+            q_i = (q_i - q_min) / (q_max - q_min + 1e-8)
 
-            if h is not None and isinstance(h, torch.Tensor):
-                h = h.detach()
+            Q_all[:, :, i] = q_i
+
+            # Prepare tokens for next action dimension
+            if i < self.K - 1:
+                if actions is not None:
+                    prev_tokens = actions[:, :, i]  # (B, T)
+                else:
+                    prev_tokens = q_i.argmax(-1)  # (B, T)
 
         return Q_all
 
@@ -223,6 +237,54 @@ class QMamba(nn.Module):
 
         return acts, q_values, h_out
 
+    def forward_cumulative(
+        self,
+        cumulative_input: torch.Tensor
+    ) -> torch.Tensor:
+        """Forward pass with cumulative (state, action_history) input.
+
+        Args:
+            cumulative_input: (B, T, state_dim + K) tensor with cumulative history
+
+        Returns:
+            q_values: (B, T, K, M) Q-values for each action step
+        """
+        B, T, feat_dim = cumulative_input.shape
+        s_flat = self.state_norm(cumulative_input.reshape(B * T, -1)[:, :self.state_dim])
+        cumulative_input = cumulative_input.reshape(B * T, -1)
+        cumulative_input[:, :self.state_dim] = s_flat
+        cumulative_input = cumulative_input.reshape(B, T, -1)
+
+        states = cumulative_input[:, :, :self.state_dim]  # (B, T, state_dim)
+        action_hist = cumulative_input[:, :, self.state_dim:].long()  # (B, T, K)
+
+        Q_all = torch.zeros(B, T, self.K, self.M, device=cumulative_input.device)
+
+        # Vectorized: process all T timesteps at once per action dimension
+        prev_tokens = self._get_start_token(B, cumulative_input.device).unsqueeze(1).expand(B, T)
+
+        for i in range(self.K):
+            tok_emb = self.token_embed(prev_tokens)  # (B, T, token_dim)
+            inp = torch.cat([states, tok_emb], dim=-1)  # (B, T, inp_dim)
+
+            x = inp
+            for mamba_layer in self.mamba_layers:
+                x, _ = mamba_layer(x)
+
+            q_inp = torch.cat([x, inp], dim=-1)
+            q_i = self.q_heads[i](q_inp)
+
+            q_min = q_i.min(-1, keepdim=True).values
+            q_max = q_i.max(-1, keepdim=True).values
+            q_i_norm = (q_i - q_min) / (q_max - q_min + 1e-8)
+
+            Q_all[:, :, i] = q_i_norm
+
+            if i < self.K - 1:
+                prev_tokens = action_hist[:, :, i]  # (B, T)
+
+        return Q_all
+
     def get_config(self) -> dict:
         """Get model configuration."""
         return {
@@ -230,6 +292,8 @@ class QMamba(nn.Module):
             'K': self.K,
             'M': self.M,
             'd_model': self.d_model,
+            'd_state': self.d_state,
+            'num_hidden_mlp': self.num_hidden_mlp,
         }
 
     @property

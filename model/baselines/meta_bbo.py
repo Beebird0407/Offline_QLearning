@@ -280,23 +280,18 @@ def create_random_baseline(K: int = 3, M: int = 16) -> callable:
 
 
 def create_exploit_baseline(K: int = 3, M: int = 16) -> callable:
+    """
+    Q-Mamba-main CfgX style: fixed default parameter values.
+    F1=0.5, F2=0.5, Cr=0.9 (normalized bins: 7, 7, 14 for M=16)
+    No progress-based adaptation - same values throughout trajectory.
+    """
     def predict(state: np.ndarray, rng: Optional[np.random.RandomState] = None, t: int = 0, T: int = 500) -> Tuple[int, ...]:
         if rng is None:
             rng = np.random.RandomState()
 
-        # Progress-based exploitation
-        progress = t / T if T > 0 else 0
-
-        # F decreases over time (less mutation as we converge)
-        F_base = int(12 - progress * 4)
-        F_bin = int(np.clip(F_base + rng.randint(-1, 2), 0, M - 1))
-
-        # Cr increases over time (more exploitation)
-        Cr_base = int(8 + progress * 6)
-        Cr_bin = int(np.clip(Cr_base + rng.randint(-1, 2), 0, M - 1))
-
-        # Additional params for Alg1/Alg2
-        bins = [F_bin, Cr_bin]
+        # Q-Mamba-main CfgX defaults: F1=0.5, F2=0.5, Cr=0.9
+        # For M=16: bins [7, 7, 14]
+        bins = [7, 7, 14]
         while len(bins) < K:
             bins.append(rng.randint(0, M))
 

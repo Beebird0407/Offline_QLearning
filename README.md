@@ -8,43 +8,34 @@ A PyTorch implementation of Q-Mamba for learning to configure evolutionary algor
 Offline_QLearning/
 ├── algorithms/              # Low-level optimization algorithms
 │   ├── __init__.py
-│   ├── alg0.py             # DE/current-to-rand/1/exponential + LPSR
-│   ├── alg1.py             # Hybrid GA + DE (10 params)
-│   └── alg2.py             # 4-subgroup heterogeneous (16 params)
-├── data/                    # Dataset collection
+│   ├── alg0.py             # DE/current-to-rand/1/exponential + LPSR (pop=100, K=3)
+│   ├── alg1.py             # Hybrid GA + DE (pop=250, K=10)
+│   └── alg2.py             # 4-subgroup heterogeneous (pop=500, K=16)
+├── data/                    # Dataset collection (batched multiprocessing)
 │   ├── __init__.py
 │   ├── bbob_suite.py       # CoCo BBOB test suite
-│   ├── trajectory.py       # Trajectory representation
-│   ├── meta_dataset.py     # E&E Dataset builder
-│   └── ee_dataset.pkl      # Cached E&E dataset
+│   ├── trajectory.py       # Transition, Trajectory, TrajectoryCollector
+│   └── meta_dataset.py     # EEDatasetBuilder, MetaDataLoader
 ├── env/                     # Environment
 │   ├── __init__.py
 │   ├── state.py            # 9-dim state representation
-│   └── action.py           # Action discretization/tokenization
-├── model/                   # Q-Mamba and baselines
+│   └── action.py           # Action discretization/tokenization (M=16 bins)
+├── model/                   # Q-Mamba and training
 │   ├── __init__.py
-│   ├── qmamba.py           # Q-Mamba model
-│   ├── trainer.py          # Training pipeline
-│   ├── agent.py            # Inference agent
+│   ├── qmamba.py           # Q-Mamba model (MambaBlock, RunningNorm)
+│   ├── trainer.py          # QMTrainer, AdaptiveCQLTrainer (dual-baseline)
+│   ├── agent.py            # QMAgent inference wrapper
 │   └── baselines/          # Baseline methods
 │       ├── __init__.py
-│       ├── dt.py           # Decision Transformer
-│       ├── dema.py         # Mamba DT
-│       ├── meta_bbo.py      # RLPSO, LDE, GLEET
-│       ├── qdt.py          # Q-DT
-│       ├── qt.py           # Q-Transformer
-│       └── q_transformer.py
-├── utils/                   # Evaluation and visualization
-│   ├── __init__.py
-│   ├── evaluation.py       # Benchmarking
-│   └── visualization.py    # Plotting
+│       └── meta_bbo.py     # RLPSO, LDE, GLEET
 ├── configs/                 # Configuration files
-│   └── default.yaml        # Default config
+│   └── default.yaml        # Default config (with adaptive_cql section)
 ├── Trained_model/           # Trained model checkpoints
-│   └── Alg0_CQL0.1/        # Example: Alg0 with λ=0.1
+├── checkpoints/             # Training checkpoints
 ├── results/                 # Evaluation results
 ├── main.py                  # Main entry point
-└── requirements.txt        # Dependencies
+├── evaluate_comparison.py   # Model comparison evaluation
+└── requirements.txt         # Dependencies
 ```
 
 ## Installation
@@ -82,61 +73,71 @@ Modify `configs/default.yaml`:
 # === Dataset Configuration ===
 dataset:
   dim: 5                     # Problem dimension (5, 10, 20, or 50)
-  train_instances: 16       # Number of training instances per function
-  test_instances: 1         # Number of testing instances per function
-  mu: 0.5                   # Mix ratio (fraction from pretrained baselines)
+  train_instances: 16        # Number of training instances per function
+  test_instances: 1          # Number of testing instances per function
+  mu: 0.5                    # Mix ratio (fraction from pretrained baselines)
   n_total_trajectories: 10000  # Total trajectory count D
-  trajectory_length: 500    # T: Number of generations per trajectory
+  trajectory_length: 500     # T: Number of generations per trajectory
+  n_workers: null            # Parallel workers (null=auto, 1=single process)
 
 # === State/Action Configuration ===
 state_action:
-  state_dim: 9              # State dimension
-  K: 3                      # Number of action parameters (3 for Alg0)
-  M: 16                     # Number of bins per parameter
+  state_dim: 9               # State dimension
+  K: 3                       # Number of action parameters (Alg0=3, Alg1=10, Alg2=16)
+  M: 16                      # Number of bins per parameter
 
 # === Algorithm Configuration ===
 algorithm:
-  type: "Alg2"              # Alg0, Alg1, or Alg2
-  pop_size: 20              # Population size
-  use_lpsr: true            # Use Linear Population Size Reduction
-  min_pop_size: 4           # Minimum population size for LPSR
+  type: "Alg0"               # Alg0, Alg1, or Alg2
+  pop_size: 100              # Population size (Alg0=100, Alg1=250, Alg2=500)
+  use_lpsr: true             # Use Linear Population Size Reduction
+  min_pop_size: 4            # Minimum population size for LPSR
 
 # === Model Configuration ===
 model:
-  type: "qmamba"            # qmamba, dt, dema, qdt, qt, q_transformer
-  d_model: 128              # Hidden dimension
-  d_state: 16               # Mamba state dimension
-  n_layers: 1               # Number of Mamba/Transformer layers
+  type: "qmamba"             # qmamba
+  d_model: 14                # Hidden dimension
+  d_state: 32                # Mamba state dimension
+  n_layers: 1                # Number of Mamba/Transformer layers
+  num_hidden_mlp: 32         # Q-head hidden dimension
 
 # === Training Configuration ===
 training:
-  lr: 0.001                 # Learning rate
-  gamma: 0.99               # Discount factor
-  beta: 10.0                # TD loss weight for final action
-  lam: 0.001                # Conservative regularization coefficient
-  batch_size: 64            # Batch size
-  n_epochs: 100             # Number of training epochs
-  grad_clip: 0.5           # Gradient clipping
-  weight_decay: 0.0001      # Weight decay
-  eval_interval: 10         # Evaluation interval (epochs)
-  checkpoint_interval: 50   # Checkpoint saving interval
-  scheduler: cosine         # Learning rate scheduler: cosine, step, or none
+  lr: 0.005                  # Learning rate
+  gamma: 0.99                # Discount factor
+  beta: 10.0                 # TD loss weight for final action
+  lam: 1.0                   # Conservative regularization coefficient
+  batch_size: 64             # Batch size
+  n_epochs: 50               # Number of training epochs
+  grad_clip: 100.0           # Gradient clipping
+  weight_decay: 0.0001       # Weight decay
+  eval_interval: 10          # Evaluation interval (epochs)
+  checkpoint_interval: 25    # Checkpoint saving interval
+  scheduler: none            # Learning rate scheduler: none, cosine, or step
+  adaptive_cql:
+    enabled: true            # Enable adaptive CQL
+    lam_init: 1.0            # Initial λ
+    lam_min: 0.01            # Minimum λ
+    lam_max: 2.0             # Maximum λ
+    dropout_p: 0.1           # Dropout probability for uncertainty estimation
+    uncertainty_samples: 8   # MC dropout samples
+    uncertainty_interval: 10 # Update uncertainty every N steps
 ```
 
 ## Algorithms
 
-| Algorithm | Description | Parameters |
-|-----------|-------------|------------|
-| **Alg0** | DE/current-to-rand/1 + exponential + LPSR | F1, F2, Cr |
-| **Alg1** | Hybrid GA + DE | 10 params (GA: sigma, Cr, ratio, elite; DE: F1, F2, Cr, ratio; cm1, cm2) |
-| **Alg2** | 4-subgroup heterogeneous | 16 params (4 subgroups × 4 params) |
+| Algorithm | Pop Size | K | Description |
+|-----------|----------|---|-------------|
+| **Alg0** | 100 | 3 | DE/current-to-rand/1 + exponential + LPSR (F1, F2, Cr) |
+| **Alg1** | 250 | 10 | Hybrid GA-DE (sigma, Cr, ratio, elite, F1, F2, Cr, ratio, cm1, cm2) |
+| **Alg2** | 500 | 16 | 4-subgroup heterogeneous (4 subgroups × 4 params) |
 
 ### Switching Algorithms
 
-Change `algorithm.type` in config:
-- `"Alg0"` → DE with LPSR (3 params)
-- `"Alg1"` → Hybrid GA-DE (10 params)
-- `"Alg2"` → 4-subgroup heterogeneous (16 params)
+Change `algorithm.type` and `algorithm.pop_size` in config:
+- `"Alg0"` → DE with LPSR, pop_size=100, K=3
+- `"Alg1"` → Hybrid GA-DE, pop_size=250, K=10
+- `"Alg2"` → 4-subgroup heterogeneous, pop_size=500, K=16
 
 ## State Representation (9-dim)
 
@@ -202,24 +203,26 @@ train_trajs, val_trajs = builder.build(
 
 ## Adaptive CQL Trainer
 
-For adaptive regularization:
+Dual-baseline adaptive regularization that adjusts λ based on dropout uncertainty:
 
 ```python
 from model.trainer import AdaptiveCQLTrainer
 
 trainer = AdaptiveCQLTrainer(
     model=model,
-    lam_init=1.0,           # Initial λ
-    lam_min=0.01,            # Min λ
-    lam_max=0.5,             # Max λ
-    optimism_threshold_high=0.5,
-    optimism_threshold_low=0.1,
-    dropout_p=0.1,
-    uncertainty_samples=8
+    lam_init=1.0,              # Initial λ
+    lam_min=0.01,              # Min λ
+    lam_max=2.0,               # Max λ
+    dropout_p=0.1,             # Dropout for MC estimation
+    uncertainty_samples=8,     # MC dropout samples
+    uncertainty_interval=10    # Update every N steps
 )
 ```
 
-Adaptive CQL:
-- Increases λ when Q-values are overestimated (high optimism)
-- Decreases λ when Q-values are calibrated (low optimism)
-- Uses dropout variance for uncertainty estimation
+**Dual-baseline mechanism:**
+- **Fast baseline** (α=0.3): detects sudden uncertainty spikes (>+15%) → increases λ (OOD risk)
+- **Slow baseline** (α=0.02): detects sustained decreases (>-8%) → decreases λ (in-distribution)
+- **Asymmetric dead zone**: fast pull-back to λ_init when λ>1.0 (0.01×), slow when λ<1.0 (0.003×)
+- **Per-step clamp**: Δλ ∈ [-0.015, +0.015] to prevent runaway
+
+Configure via `configs/default.yaml` → `training.adaptive_cql`.

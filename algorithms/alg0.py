@@ -1,27 +1,19 @@
-"""
-Alg0: DE/current-to-rand/1/exponential + LPSR
-
-Controllable parameters: F1, F2, Cr
-Features: Boundary control, population reduction (LPSR)
-"""
-
 import numpy as np
-from typing import Optional, Tuple, Callable, Dict, Any
+from typing import Tuple, Callable
 
 
 class Alg0Optimizer:
-    K = 3  # Number of action parameters: F1, F2, Cr
+    K = 3
 
-    # Parameter ranges
-    F1_range = (0.1, 1.0)
-    F2_range = (0.1, 1.0)
+    F1_range = (0.0, 1.0)
+    F2_range = (0.0, 1.0)
     Cr_range = (0.0, 1.0)
 
     def __init__(
         self,
         dim: int,
         bounds: np.ndarray,
-        pop_size: int = 20,
+        pop_size: int = 100,
         seed: int = 42,
         use_lpsr: bool = True,
         min_pop_size: int = 4
@@ -34,29 +26,22 @@ class Alg0Optimizer:
         self.use_lpsr = use_lpsr
         self.rng = np.random.RandomState(seed)
         self._step_count = 0
-
-        # Best solution tracking
         self.best_x = None
         self.best_f = float('inf')
 
     def bin_to_F1(self, b: int, M: int = 16) -> float:
-        """Convert bin index to F1 value."""
-        return self.F1_range[0] + (self.F1_range[1] - self.F1_range[0]) * b / (M - 1)
+        return self.F1_range[0] + (b + 0.5) * (self.F1_range[1] - self.F1_range[0]) / M
 
     def bin_to_F2(self, b: int, M: int = 16) -> float:
-        """Convert bin index to F2 value."""
-        return self.F2_range[0] + (self.F2_range[1] - self.F2_range[0]) * b / (M - 1)
+        return self.F2_range[0] + (b + 0.5) * (self.F2_range[1] - self.F2_range[0]) / M
 
     def bin_to_Cr(self, b: int, M: int = 16) -> float:
-        """Convert bin index to Cr value."""
-        return self.Cr_range[0] + (self.Cr_range[1] - self.Cr_range[0]) * b / (M - 1)
+        return self.Cr_range[0] + (b + 0.5) * (self.Cr_range[1] - self.Cr_range[0]) / M
 
     def bin_to_params(self, bins: Tuple[int, int, int], M: int = 16) -> Tuple[float, float, float]:
-        """Convert bin indices to (F1, F2, Cr)."""
         return self.bin_to_F1(bins[0], M), self.bin_to_F2(bins[1], M), self.bin_to_Cr(bins[2], M)
 
     def initialize(self) -> np.ndarray:
-        """Initialize population uniformly in bounds."""
         return np.column_stack([
             self.rng.uniform(lo, hi, self.pop_size)
             for lo, hi in self.bounds
@@ -98,22 +83,17 @@ class Alg0Optimizer:
         return trial
 
     def _bound(self, x: np.ndarray) -> np.ndarray:
-        """Clip to bounds."""
         return np.clip(x, self.bounds[:, 0], self.bounds[:, 1])
 
     def _update_population_size(self, t: int, T: int):
-        """Update population size using LPSR strategy."""
         if not self.use_lpsr:
             return
 
-        # Linear reduction from pop_size_init to min_pop_size
         progress = t / T if T > 0 else 0
         new_size = max(
             self.min_pop_size,
             int(self.pop_size_init - (self.pop_size_init - self.min_pop_size) * progress)
         )
-
-        # Only reduce when population size changes meaningfully
         if new_size < self.pop_size and new_size >= self.min_pop_size:
             self.pop_size = new_size
 
@@ -132,7 +112,6 @@ class Alg0Optimizer:
         F2 = self.bin_to_F2(F2_bin, M)
         Cr = self.bin_to_Cr(Cr_bin, M)
 
-        # Update population size (LPSR)
         self._update_population_size(t, T)
 
         current_pop_size = len(pop)
@@ -140,17 +119,13 @@ class Alg0Optimizer:
         new_fit = fitness.copy()
 
         for i in range(current_pop_size):
-            # Mutation: current-to-rand/1
             mutant = self._mutate_current_to_rand(pop[i], pop, F1, F2)
 
-            # Boundary control
             mutant = self._bound(mutant)
 
-            # Crossover: exponential
             trial = self._crossover_exponential(pop[i], mutant, Cr)
             trial = self._bound(trial)
 
-            # Selection (minimization)
             f_trial = func(trial)
             if f_trial <= fitness[i]:
                 new_pop[i] = trial
@@ -161,7 +136,6 @@ class Alg0Optimizer:
                     self.best_f = f_trial
                     self.best_x = trial.copy()
 
-        # If population was reduced, trim the worst individuals
         if current_pop_size > self.pop_size:
             idx = np.argsort(new_fit)[:self.pop_size]
             new_pop = new_pop[idx]
@@ -169,18 +143,3 @@ class Alg0Optimizer:
 
         self._step_count += 1
         return new_pop, new_fit
-
-    def reset(self):
-        """Reset optimizer state."""
-        self.pop_size = self.pop_size_init
-        self.best_x = None
-        self.best_f = float('inf')
-        self._step_count = 0
-
-    @property
-    def name(self) -> str:
-        return "Alg0_DE_current_to_rand_1_exp"
-
-
-# Alias for backwards compatibility
-Alg0 = Alg0Optimizer

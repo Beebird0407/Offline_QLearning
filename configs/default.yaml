@@ -1,66 +1,70 @@
-# Q-Mamba Configuration File
-# Modify these parameters to customize the experiment
+# Q-Mamba: Offline Meta-Learning of DE Hyperparameter Control via Mamba SSM + Adaptive CQL.
+# See README.md for full documentation.
 
-# === Dataset Configuration ===
+# === Dataset ===
 dataset:
-  dim: 5                    # Problem dimension (5, 10, 20, or 50)
-  train_instances: 16       # Number of training instances per function
-  test_instances: 1        # Number of testing instances per function
-  mu: 0.5                   # Mix ratio (fraction from pretrained baselines)
-  n_total_trajectories: 10000  # Total trajectory count D
-  trajectory_length: 500    # T: Number of generations per trajectory
+  dim: 5                     # Problem dimension (5, 10, 20)
+  train_instances: 16        # Training instances per BBOB function
+  test_instances: 1          # Testing instances per BBOB function
+  mu: 0.5                    # Exploit/explore mix ratio
+  n_total_trajectories: 10000  # Total trajectory count
+  trajectory_length: 500     # Generations per trajectory
+  seed: 42                   # Random seed
+  n_workers: null            # Parallel workers (null=auto, 1=single-process)
 
-# === State/Action Configuration ===
+# === State / Action ===
 state_action:
-  state_dim: 9              # State dimension
-  K: 3                      # Number of action parameters (3 for Alg0)
-  M: 16                     # Number of bins per parameter
+  state_dim: 9               # Fixed 9-dim state representation
+  K: 3                       # Action parameters (Alg0=3, Alg1=10, Alg2=16)
+  M: 16                      # Discretisation bins per parameter
 
-# === Algorithm Configuration ===
+# === Algorithm ===
 algorithm:
-  type: "Alg2"              # Alg0, Alg1, or Alg2
-  pop_size: 20              # Population size
-  use_lpsr: true            # Use Linear Population Size Reduction
-  min_pop_size: 4           # Minimum population size for LPSR
+  type: "Alg1"               # Alg0 (K=3, pop=100) | Alg1 (K=10, pop=250) | Alg2 (K=16, pop=500)
+  pop_size: 250              # Initial population size (set per algorithm above)
+  use_lpsr: true             # Linear Population Size Reduction
+  min_pop_size: 4            # Minimum population under LPSR
 
-# === Model Configuration ===
+# === Model ===
 model:
-  type: "qmamba"            # qmamba, dt, dema, qdt, qt, q_transformer
-  d_model: 128              # Hidden dimension
-  d_state: 16               # Mamba state dimension
-  n_layers: 1               # Number of Mamba/Transformer layers
+  type: "qmamba"             # Q-Mamba (Mamba SSM backbone with GRU fallback)
+  d_model: 14                # Hidden dimension (state_dim + token_dim)
+  d_state: 32                # Mamba SSM state dimension
+  n_layers: 1                # Number of Mamba blocks
+  num_hidden_mlp: 32         # Q-head hidden dimension
 
-# === Training Configuration ===
+# === Training ===
 training:
-  lr: 0.001                 # Learning rate
-  gamma: 0.99               # Discount factor
-  beta: 10.0                # TD loss weight for final action
-  lam: 0.001                # Conservative regularization coefficient
-  batch_size: 16            # Batch size
-  n_epochs: 30            # Number of training epochs
-  grad_clip: 0.5            # Gradient clipping
-  weight_decay: 0.0001      # Weight decay
-  eval_interval: 10         # Evaluation interval (epochs)
-  checkpoint_interval: 50   # Checkpoint saving interval
-  print_every: 1           # Print every N epochs
-  scheduler: cosine         # Learning rate scheduler: cosine, step, or none
+  lr: 0.005                  # Learning rate (AdamW)
+  gamma: 0.99                # Discount factor
+  beta: 10.0                 # TD-loss weight on the final chain-link action
+  lam: 1.0                   # CQL regularisation strength (only used when adaptive_cql.enabled = false)
+  batch_size: 64             # Batch size
+  n_epochs: 50               # Training epochs
+  grad_clip: 100.0           # Gradient clipping norm
+  weight_decay: 0.0001       # AdamW weight decay
+  eval_interval: 10          # Run validation every N epochs
+  checkpoint_interval: 25    # Save checkpoint every N epochs
+  print_every: 1             # Print metrics every N epochs
+  scheduler: none            # LR scheduler: none | cosine | step
+
+  # Dual-baseline adaptive CQL: λ rises when dropout-uncertainty spikes (OOD risk),
+  # falls when uncertainty drops below long-term trend (in-distribution).
   adaptive_cql:
-    enabled: true          # Enable adaptive CQL (if false, use standard QMTrainer)
-    lam_init: 0.001         # Initial λ value
-    lam_min: 0.0005           # Minimum λ
-    lam_max: 0.5            # Maximum λ
-    optimism_threshold_high: 0.5  # Increase λ if optimism > this
-    optimism_threshold_low: 0.1   # Decrease λ if optimism < this
-    dropout_p: 0.1          # Dropout probability for uncertainty estimation
-    uncertainty_samples: 8    # Number of samples for uncertainty estimation
-    uncertainty_interval: 10   # Estimate uncertainty every N steps (for speed)
+    enabled: true           # true or false
+    lam_init: 1.0            # Initial λ
+    lam_min: 0.01            # Minimum λ
+    lam_max: 2.0             # Maximum λ
+    dropout_p: 0.1           # Dropout rate for MC uncertainty estimation
+    uncertainty_samples: 8   # MC dropout samples per estimate
+    uncertainty_interval: 10 # Re-estimate uncertainty every N training steps
 
-# === Evaluation Configuration ===
+# === Evaluation ===
 evaluation:
-  n_runs: 19                # Number of independent runs per test
-  n_runs_ood: 10           # Number of runs for OOD test
+  n_runs: 19                 # Independent runs per test function
+  n_runs_ood: 10             # Runs for OOD test
 
-# === Ablation Configuration ===
+# === Ablation ===
 ablation:
   lambda_values: [0.0, 1.0, 10.0]
   beta_values: [1.0, 10.0]

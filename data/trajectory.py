@@ -1,11 +1,5 @@
-"""
-Trajectory Collection for E&E Dataset
-
-Records state sequences, action sequences, and reward sequences
-for offline RL training.
-"""
-
 import numpy as np
+import torch
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Callable
 import pickle
@@ -13,9 +7,8 @@ import pickle
 
 @dataclass
 class Transition:
-    """Single transition: (state, action, reward, next_state, done)."""
     state: np.ndarray
-    action: np.ndarray  # Bin indices for each hyperparameter
+    action: np.ndarray
     reward: float
     next_state: np.ndarray
     done: bool
@@ -42,10 +35,9 @@ class Transition:
 
 @dataclass
 class Trajectory:
-    """Complete optimization trajectory."""
     transitions: List[Transition] = field(default_factory=list)
     task_id: str = ""
-    strategy: str = ""  # 'exploit', 'explore', or 'meta_alg'
+    strategy: str = ""
     total_reward: float = 0.0
     initial_fitness: float = 0.0
     final_fitness: float = 0.0
@@ -67,33 +59,23 @@ class Trajectory:
         return len(self.transitions)
 
     def get_states(self) -> np.ndarray:
-        """Get all states as (T, state_dim) array."""
-        if not self.transitions:
-            return np.array([])
+        if not self.transitions: return np.array([])
         return np.array([t.state for t in self.transitions])
 
     def get_actions(self) -> np.ndarray:
-        """Get all actions as (T, K) array."""
-        if not self.transitions:
-            return np.array([])
+        if not self.transitions: return np.array([])
         return np.array([t.action for t in self.transitions])
 
     def get_rewards(self) -> np.ndarray:
-        """Get all rewards as (T,) array."""
-        if not self.transitions:
-            return np.array([])
+        if not self.transitions: return np.array([])
         return np.array([t.reward for t in self.transitions])
 
     def get_next_states(self) -> np.ndarray:
-        """Get all next_states as (T, state_dim) array."""
-        if not self.transitions:
-            return np.array([])
+        if not self.transitions: return np.array([])
         return np.array([t.next_state for t in self.transitions])
 
     def get_dones(self) -> np.ndarray:
-        """Get all dones as (T,) array."""
-        if not self.transitions:
-            return np.array([])
+        if not self.transitions: return np.array([])
         return np.array([t.done for t in self.transitions])
 
     def to_dict(self) -> dict:
@@ -132,22 +114,17 @@ class Trajectory:
         return traj
 
     def save(self, path: str):
-        """Save trajectory to file."""
         with open(path, 'wb') as f:
             pickle.dump(self.to_dict(), f)
 
     @classmethod
     def load(cls, path: str) -> 'Trajectory':
-        """Load trajectory from file."""
         with open(path, 'rb') as f:
             d = pickle.load(f)
         return cls.from_dict(d)
 
 
 class TrajectoryCollector:
-    """
-    Collects optimization trajectories using specified optimizer and strategy.
-    """
 
     def __init__(
         self,
@@ -178,9 +155,7 @@ class TrajectoryCollector:
         y_range: float = 1.0
     ) -> float:
         if prev_best <= curr_best:
-            return 0.0  # No improvement
-
-        # Normalized improvement
+            return 0.0
         improvement = prev_best - curr_best
         if y_range > 1e-8:
             return float(np.clip(improvement / y_range, -1.0, 1.0))
@@ -197,8 +172,6 @@ class TrajectoryCollector:
         seed: Optional[int] = None
     ) -> Trajectory:
         rng = self.rng if seed is None else np.random.RandomState(seed)
-
-        # Initialize optimizer
         opt = self.optimizer_class(
             dim=dim,
             bounds=bounds,
@@ -210,71 +183,48 @@ class TrajectoryCollector:
         pop = opt.initialize()
         fitness = np.array([problem(x) for x in pop])
 
-        # Initialize state
-        state_extractor = self.state_extractor.__class__()  # Fresh extractor
-        prev_best = float(fitness.min())
-        best_so_far = prev_best
-
+        state_extractor = self.state_extractor.__class__()
+        initial_fitness = float(fitness.min())
+        best_so_far = initial_fitness
+        y_range = max(1.0, float(fitness.max() - fitness.min()))
         trajectory = Trajectory(task_id=task_id, strategy=strategy)
 
-        # Estimate y_range for reward normalization
-        y_range = max(1.0, float(fitness.max() - fitness.min()))
-
         for t in range(self.T):
-            # Compute state
             state = state_extractor.compute(pop, fitness, t, self.T)
 
-            # Select action based on strategy
             if strategy == 'random':
                 action_bins = rng.randint(0, self.action_space.M, size=self.action_space.K)
             elif strategy == 'exploit':
-                # Exploitation-oriented action selection
-                prog = t / self.T
-                action_bins = np.array([
-                    rng.randint(int(8 - prog * 4), int(12 + prog * 4)) % self.action_space.M
-                    for _ in range(self.action_space.K)
-                ])
+                if self.action_space.K == 3:
+                    action_bins = np.array([7, 7, 14])
+                else:
+                    action_bins = np.full(self.action_space.K, self.action_space.M // 2)
             elif strategy == 'meta_alg' and meta_agent is not None:
-                # Use trained meta-agent
-                with np.no_grad():
+                with torch.no_grad():
                     action_bins = meta_agent.predict(state, rng=rng)
             else:
                 action_bins = rng.randint(0, self.action_space.M, size=self.action_space.K)
 
-            # Ensure valid bins
             action_bins = np.clip(action_bins, 0, self.action_space.M - 1)
-
-            # Execute optimization step
-            prev_pop = pop.copy()
-            prev_fitness = fitness.copy()
             prev_best = best_so_far
-
             pop, fitness = opt.step(pop, fitness, tuple(action_bins), problem, t, self.T)
 
-            # Update best so far
             curr_best = float(fitness.min())
             if curr_best < best_so_far:
                 best_so_far = curr_best
 
-            # Compute reward
-            reward = self._compute_reward(prev_fitness, fitness, prev_best, best_so_far, y_range)
-
-            # Compute next state
+            reward = self._compute_reward(fitness, fitness, prev_best, best_so_far, y_range)
             next_state = state_extractor.compute(pop, fitness, t + 1, self.T)
 
-            # Check termination
-            done = (t == self.T - 1)
-
-            # Add transition
             trajectory.append(Transition(
                 state=state,
                 action=action_bins.astype(np.int64),
                 reward=reward,
                 next_state=next_state,
-                done=done
+                done=(t == self.T - 1)
             ))
 
-        trajectory.initial_fitness = prev_best
+        trajectory.initial_fitness = initial_fitness
         trajectory.final_fitness = best_so_far
 
         return trajectory
@@ -284,20 +234,13 @@ class TrajectoryCollector:
         problems: List[Tuple[str, Callable]],
         bounds: np.ndarray,
         strategy: str = 'random',
-        meta_agent=None,
-        verbose: bool = True
+        meta_agent=None
     ) -> List[Trajectory]:
         trajectories = []
         for i, (name, prob) in enumerate(problems):
-            dim = len(bounds)
             traj = self.collect_trajectory(
-                problem=prob,
-                dim=dim,
-                bounds=bounds,
-                strategy=strategy,
-                task_id=name,
-                meta_agent=meta_agent,
-                seed=42 + i
+                problem=prob, dim=len(bounds), bounds=bounds,
+                strategy=strategy, task_id=name, meta_agent=meta_agent, seed=42 + i
             )
             trajectories.append(traj)
 

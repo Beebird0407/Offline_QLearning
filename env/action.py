@@ -1,11 +1,3 @@
-"""
-Action Discretization, Tokenization, and Discretization
-
-- Discretization: Split continuous hyperparameter range into M bins
-- Tokenization: Convert bin index to 5-bit binary encoding
-- Discretization (reverse): Map bin index back to parameter value
-"""
-
 import numpy as np
 from typing import Tuple, List, Optional
 
@@ -23,21 +15,19 @@ class ActionDiscretizer:
         return lo + (bin_idx + 0.5) * (hi - lo) / self.M
 
     def get_bin_edges(self, lo: float, hi: float) -> np.ndarray:
-        """Get bin edge values."""
         return np.linspace(lo, hi, self.M + 1)
 
     def get_bin_centers(self, lo: float, hi: float) -> np.ndarray:
-        """Get bin center values."""
         edges = self.get_bin_edges(lo, hi)
         return (edges[:-1] + edges[1:]) / 2
 
 
 class ActionTokenizer:
-    TOKEN_DIM = 5  # 5-bit encoding
+    TOKEN_DIM = 5
 
     def __init__(self, M: int = 16):
         self.M = M
-        self._start_token_value = (1 << self.TOKEN_DIM) - 1  # 31 = 11111
+        self._start_token_value = (1 << self.TOKEN_DIM) - 1
 
     def tokenize(self, bin_idx: int) -> np.ndarray:
         bin_idx = int(np.clip(bin_idx, 0, self.M - 1))
@@ -63,15 +53,13 @@ class ActionTokenizer:
         return min(bin_idx, self.M - 1)
 
     def get_start_token(self, batch_size: Optional[int] = None) -> np.ndarray:
-        token = np.zeros(self.TOKEN_DIM, dtype=np.float32)
-        token[:] = 1  # All ones = 11111
+        token = np.ones(self.TOKEN_DIM, dtype=np.float32)
         if batch_size is not None:
             token = np.tile(token, (batch_size, 1))
         return token
 
     @property
     def start_token_value(self) -> int:
-        """Get start token as integer value."""
         return self._start_token_value
 
 
@@ -101,10 +89,8 @@ class ActionSpace:
         return self.tokenizer.tokenize_batch(bins)
 
     def get_action_dim(self) -> int:
-        """Get total action dimension (K * token_dim)."""
-        return self.K * self.TOKEN_DIM
+        return self.K * self.tokenizer.TOKEN_DIM
 
     @property
     def token_dim(self) -> int:
-        """Get token dimension."""
-        return self.TOKEN_DIM
+        return self.tokenizer.TOKEN_DIM
