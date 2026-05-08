@@ -39,6 +39,7 @@ def _collect_trajectory_worker(args: dict) -> dict:
     K = args['K']
     M = args['M']
     task_id = args.get('task_id', '')
+    cpu_throttle = args.get('cpu_throttle', 0.0)
 
     # Reconstruct BBOB function
     bbob_suite = BBOBSuite(dim=dim, n_train_instances=1, n_test_instances=1, seed=42)
@@ -66,6 +67,7 @@ def _collect_trajectory_worker(args: dict) -> dict:
         seed=seed,
         use_lpsr=use_lpsr,
         min_pop_size=min_pop_size,
+        cpu_throttle=cpu_throttle,
     )
 
     traj = collector.collect_trajectory(
@@ -94,7 +96,8 @@ class EEDatasetBuilder:
         mu: float = 0.5,
         seed: int = 42,
         use_lpsr: bool = True,
-        min_pop_size: int = 4
+        min_pop_size: int = 4,
+        cpu_throttle: float = 0.0,
     ):
         self.bbob_suite = bbob_suite
         self.optimizer_class = optimizer_class
@@ -107,6 +110,7 @@ class EEDatasetBuilder:
         self.seed = seed
         self.use_lpsr = use_lpsr
         self.min_pop_size = min_pop_size
+        self.cpu_throttle = cpu_throttle
 
         from env.state import StateExtractor
         from env.action import ActionSpace
@@ -187,6 +191,7 @@ class EEDatasetBuilder:
                 'T': self.T,
                 'use_lpsr': self.use_lpsr,
                 'min_pop_size': self.min_pop_size,
+                'cpu_throttle': self.cpu_throttle,
                 'K': self.K,
                 'M': self.M,
                 'fid': fid,
@@ -205,6 +210,7 @@ class EEDatasetBuilder:
                 'T': self.T,
                 'use_lpsr': self.use_lpsr,
                 'min_pop_size': self.min_pop_size,
+                'cpu_throttle': self.cpu_throttle,
                 'K': self.K,
                 'M': self.M,
                 'fid': fid,
@@ -212,28 +218,26 @@ class EEDatasetBuilder:
                 'task_id': f"F{fid}_explore_{i}",
             })
 
-        # Collect trajectories with multiprocessing (batched to limit memory)
-        all_trajectories = []
+        # Collect trajectories — stream to disk to avoid OOM
+        import os, tempfile, pickle as pk
+        tmp_dir = tempfile.mkdtemp(prefix='ee_dataset_')
 
         if n_workers is None:
-            import os
             n_workers = min(os.cpu_count() or 1, 8)
 
         if n_workers <= 1:
-            # Single-process fallback
             if verbose:
                 print(f"\n  Collecting {len(task_args)} trajectories (single process)...")
             for idx, args in enumerate(task_args):
                 traj_dict = _collect_trajectory_worker(args)
-                all_trajectories.append(Trajectory.from_dict(traj_dict))
+                with open(os.path.join(tmp_dir, f'{idx}.pkl'), 'wb') as f:
+                    pk.dump(traj_dict, f)
                 if verbose and (idx + 1) % 500 == 0:
                     print(f"    Progress: {idx+1}/{len(task_args)}")
         else:
             if verbose:
                 print(f"\n  Collecting {len(task_args)} trajectories ({n_workers} workers)...")
 
-            # Process in batches to avoid holding all futures in memory at once.
-            # Single executor reused across batches (no per-batch spawn overhead).
             batch_size = n_workers * 50
             n_batches = (len(task_args) + batch_size - 1) // batch_size
             completed = 0
@@ -243,34 +247,47 @@ class EEDatasetBuilder:
                     start = batch_idx * batch_size
                     end = min(start + batch_size, len(task_args))
                     batch_tasks = task_args[start:end]
-
                     futures = {executor.submit(_collect_trajectory_worker, args): i
                                for i, args in enumerate(batch_tasks)}
                     for future in as_completed(futures):
+                        idx = futures[future]
                         try:
                             traj_dict = future.result()
-                            all_trajectories.append(Trajectory.from_dict(traj_dict))
+                            with open(os.path.join(tmp_dir, f'{start + idx}.pkl'), 'wb') as f:
+                                pk.dump(traj_dict, f)
                         except Exception as e:
                             if verbose:
                                 print(f"  [Warning] Worker failed: {e}")
                         completed += 1
-
                     if verbose:
                         print(f"    Progress: {completed}/{len(task_args)} "
                               f"(batch {batch_idx + 1}/{n_batches})")
 
-        # Shuffle and split
-        rng.shuffle(all_trajectories)
-        n_val = max(1, int(len(all_trajectories) * 0.2))
-        train_trajs = all_trajectories[:-n_val]
-        val_trajs = all_trajectories[-n_val:]
+        # Shuffle file indices, split, then load train/val in streaming fashion
+        saved = sorted(os.listdir(tmp_dir))
+        indices = list(range(len(saved)))
+        rng.shuffle(indices)
+        n_val = max(1, int(len(indices) * 0.2))
+        train_idx = set(indices[:-n_val])
+
+        train_trajs, val_trajs = [], []
+        for i, fn in enumerate(saved):
+            with open(os.path.join(tmp_dir, fn), 'rb') as f:
+                traj = Trajectory.from_dict(pk.load(f))
+            if i in train_idx:
+                train_trajs.append(traj)
+            else:
+                val_trajs.append(traj)
+
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
         if verbose:
-            rewards = [t.total_reward for t in all_trajectories]
+            all_rewards = [t.total_reward for t in train_trajs] + [t.total_reward for t in val_trajs]
             print(f"\n  Dataset built successfully!")
             print(f"    Train trajectories: {len(train_trajs)}")
             print(f"    Val trajectories: {len(val_trajs)}")
-            print(f"    Avg reward: {np.mean(rewards):.4f} ± {np.std(rewards):.4f}")
+            print(f"    Avg reward: {np.mean(all_rewards):.4f} ± {np.std(all_rewards):.4f}")
 
         if save_path:
             self._save_dataset(train_trajs, val_trajs, save_path)

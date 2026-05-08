@@ -6,11 +6,11 @@ dataset:
   dim: 5                     # Problem dimension (5, 10, 20)
   train_instances: 16        # Training instances per BBOB function
   test_instances: 1          # Testing instances per BBOB function
-  mu: 0.5                    # Exploit/explore mix ratio
+  mu: 0.5                   # Exploit/explore mix ratio 
   n_total_trajectories: 10000  # Total trajectory count
   trajectory_length: 500     # Generations per trajectory
-  seed: 42                   # Random seed
-  n_workers: null            # Parallel workers (null=auto, 1=single-process)
+  seed: 999                  # Random seed (Q-Mamba-main default)
+  n_workers: 4            # Parallel workers (null=auto, 1=single-process)
 
 # === State / Action ===
 state_action:
@@ -40,24 +40,36 @@ training:
   beta: 10.0                 # TD-loss weight on the final chain-link action
   lam: 1.0                   # CQL regularisation strength (only used when adaptive_cql.enabled = false)
   batch_size: 64             # Batch size
-  n_epochs: 50               # Training epochs
+  n_epochs: 100              # Training epochs (Q-Mamba-main default)
   grad_clip: 100.0           # Gradient clipping norm
   weight_decay: 0.0001       # AdamW weight decay
   eval_interval: 10          # Run validation every N epochs
-  checkpoint_interval: 25    # Save checkpoint every N epochs
+  checkpoint_interval: 50    # Save checkpoint every N epochs
   print_every: 1             # Print metrics every N epochs
-  scheduler: none            # LR scheduler: none | cosine | step
+  scheduler: none            # LR scheduler: none (Q-Mamba-main default, no lr_decay)
 
   # Dual-baseline adaptive CQL: λ rises when dropout-uncertainty spikes (OOD risk),
   # falls when uncertainty drops below long-term trend (in-distribution).
   adaptive_cql:
-    enabled: true           # true or false
+    enabled: false            # true or false
     lam_init: 1.0            # Initial λ
     lam_min: 0.01            # Minimum λ
     lam_max: 2.0             # Maximum λ
     dropout_p: 0.1           # Dropout rate for MC uncertainty estimation
     uncertainty_samples: 8   # MC dropout samples per estimate
     uncertainty_interval: 10 # Re-estimate uncertainty every N training steps
+
+  # Ensemble Q-network training: trains K independent QMamba networks with
+  # diversity regularisation.  Ensemble variance replaces MC dropout as the
+  # uncertainty signal for adaptive CQL, and each member maintains its own
+  # per-member adaptive lambda.
+  ensemble:
+    enabled: false           # Enable ensemble training (overrides adaptive_cql.enabled)
+    n_members: 3             # Number of ensemble members (3-7 recommended)
+    diversity_weight: 1    # Weight on the diversity regularisation loss
+    diversity_type: mi       # "mi" (mutual information) or "variance"
+    inference: pessimistic   # "pessimistic" / "mean" / "thompson"
+    base_seed: 42            # Base seed for member initialisation
 
 # === Evaluation ===
 evaluation:

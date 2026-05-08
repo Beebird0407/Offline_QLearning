@@ -1,3 +1,4 @@
+import time
 import numpy as np
 import torch
 from dataclasses import dataclass, field
@@ -135,7 +136,8 @@ class TrajectoryCollector:
         T: int = 500,
         seed: int = 42,
         use_lpsr: bool = True,
-        min_pop_size: int = 4
+        min_pop_size: int = 4,
+        cpu_throttle: float = 0.0,
     ):
         self.optimizer_class = optimizer_class
         self.state_extractor = state_extractor
@@ -145,6 +147,7 @@ class TrajectoryCollector:
         self.rng = np.random.RandomState(seed)
         self.use_lpsr = use_lpsr
         self.min_pop_size = min_pop_size
+        self.cpu_throttle = cpu_throttle
 
     def _compute_reward(
         self,
@@ -190,6 +193,8 @@ class TrajectoryCollector:
         trajectory = Trajectory(task_id=task_id, strategy=strategy)
 
         for t in range(self.T):
+            if self.cpu_throttle > 0:
+                time.sleep(self.cpu_throttle)
             state = state_extractor.compute(pop, fitness, t, self.T)
 
             if strategy == 'random':

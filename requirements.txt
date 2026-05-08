@@ -4,6 +4,9 @@ scipy>=1.7.0
 torch>=2.0.0
 matplotlib>=3.5.0
 
+# TensorBoard (view training logs)
+tensorboard>=2.14.0
+
 # Optional: Mamba SSM (if available, will use GPU-accelerated version)
 # pip install mamba-ssm
 

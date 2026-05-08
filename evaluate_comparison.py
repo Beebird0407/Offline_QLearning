@@ -16,7 +16,7 @@ try:
 except ImportError:
     NEVERGRAD_AVAILABLE = False
 
-from model.qmamba import QMamba
+from model.qmamba import QMamba, QEnsemble
 from algorithms.alg0 import Alg0Optimizer
 from algorithms.alg1 import Alg1Optimizer
 from algorithms.alg2 import Alg2Optimizer
@@ -248,7 +248,7 @@ class QMAgent:
         cfg = ckpt.get('config', {})
         sd = {k.replace('module.', ''): v for k, v in ckpt['model_state_dict'].items()}
 
-        # Detect backend and ensure architecture matches the checkpoint
+        # Detect backend: Mamba keys (A_log, in_proj) vs GRU keys (weight_ih_l0)
         uses_mamba = any('in_proj' in k or 'A_log' in k for k in sd.keys())
         if uses_mamba:
             from model.qmamba import _MAMBA_AVAILABLE
@@ -266,6 +266,13 @@ class QMAgent:
                         "Checkpoint uses Mamba SSM backend which requires CUDA, "
                         "but no GPU is available."
                     )
+        force_cpu = not uses_mamba  # use GRU only when checkpoint has no Mamba keys
+
+        # Detect ensemble checkpoint: keys are prefixed with qnet_N.
+        is_ensemble = any(k.startswith('qnet_') for k in sd.keys())
+
+        if is_ensemble:
+            return QEnsembleAgent._from_checkpoint_inner(ckpt, sd, cfg, device, force_cpu)
 
         model = QMamba(
             state_dim=cfg.get('state_dim', 9),
@@ -275,7 +282,7 @@ class QMAgent:
             d_state=cfg.get('d_state', 32),
             n_layers=cfg.get('n_layers', 1),
             num_hidden_mlp=cfg.get('num_hidden_mlp', 32),
-            force_cpu=False,
+            force_cpu=force_cpu,
         )
         model.load_state_dict(sd)
         return cls(model, device=device)
@@ -286,6 +293,47 @@ class QMAgent:
             if s.dim() == 1:
                 s = s.unsqueeze(0)
             acts, _, _ = self.model.act(s, deterministic=True)
+            return acts.cpu().numpy()[0]
+
+
+class QEnsembleAgent:
+    """Agent wrapping a trained QEnsemble model."""
+
+    def __init__(self, model, device='cpu', inference_mode='pessimistic'):
+        self.model = model.to(device)
+        self.model.eval()
+        self.device = device
+        self.K = model.K
+        self.M = model.M
+        self.inference_mode = inference_mode
+
+    @classmethod
+    def _from_checkpoint_inner(cls, ckpt, sd, cfg, device='cpu', force_cpu=False):
+        trainer_cfg = ckpt.get('trainer_config', {})
+        inference_mode = trainer_cfg.get('inference', 'pessimistic')
+        n_members = cfg.get('n_members', trainer_cfg.get('n_members', 3))
+
+        model = QEnsemble(
+            n_members=n_members,
+            state_dim=cfg.get('state_dim', 9),
+            K=cfg.get('K', 3),
+            M=cfg.get('M', 16),
+            d_model=cfg.get('d_model', 14),
+            d_state=cfg.get('d_state', 32),
+            n_layers=cfg.get('n_layers', 1),
+            num_hidden_mlp=cfg.get('num_hidden_mlp', 32),
+            force_cpu=force_cpu,
+            base_seed=cfg.get('base_seed', 42),
+        )
+        model.load_state_dict(sd)
+        return cls(model, device=device, inference_mode=inference_mode)
+
+    def act(self, state_np):
+        with torch.no_grad():
+            s = torch.tensor(state_np, dtype=torch.float32, device=self.device)
+            if s.dim() == 1:
+                s = s.unsqueeze(0)
+            acts, _ = self.model.act(s, mode=self.inference_mode)
             return acts.cpu().numpy()[0]
 
 

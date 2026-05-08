@@ -39,8 +39,8 @@ def main():
 
     # Execute mode
     if args.mode == 'train' or args.mode == 'all':
-        from model.qmamba import QMamba
-        from model.trainer import QMTrainer, AdaptiveCQLTrainer, TrainingConfig
+        from model.qmamba import QMamba, QEnsemble
+        from model.trainer import QMTrainer, AdaptiveCQLTrainer, EnsembleAdaptiveCQLTrainer, TrainingConfig
         from data.bbob_suite import BBOBSuite
         from data.meta_dataset import EEDatasetBuilder, MetaDataLoader
         from algorithms.alg0 import Alg0Optimizer
@@ -178,6 +178,8 @@ def main():
 
         # Get adaptive CQL parameters from config
         adaptive_cql_config = config.get('training', {}).get('adaptive_cql', {})
+        ensemble_config = config.get('training', {}).get('ensemble', {})
+        use_ensemble = ensemble_config.get('enabled', False)
         use_adaptive_cql = adaptive_cql_config.get('enabled', False)
         lam_init = adaptive_cql_config.get('lam_init', config.get('training', {}).get('lam', 1.0))
         lam_min = adaptive_cql_config.get('lam_min', 0.01)
@@ -186,8 +188,61 @@ def main():
         uncertainty_samples = adaptive_cql_config.get('uncertainty_samples', 8)
         uncertainty_interval = adaptive_cql_config.get('uncertainty_interval', 10)
 
-        if use_adaptive_cql:
-            print(f"  Using AdaptiveCQLTrainer with λ∈[{lam_min}, {lam_max}], init={lam_init}")
+        if use_ensemble:
+            # --- Ensemble training ---
+            n_members = ensemble_config.get('n_members', 5)
+            div_weight = ensemble_config.get('diversity_weight', 0.1)
+            div_type = ensemble_config.get('diversity_type', 'mi')
+            base_seed = ensemble_config.get('base_seed', 42)
+
+            print(f"\n[2/3] Creating Q-Ensemble model ({n_members} members)...")
+            model = QEnsemble(
+                n_members=n_members,
+                state_dim=state_dim,
+                K=K,
+                M=M,
+                d_model=d_model,
+                d_state=d_state,
+                n_layers=n_layers,
+                num_hidden_mlp=num_hidden_mlp,
+                force_cpu=(device == 'cpu'),
+                base_seed=base_seed,
+            )
+            print(f"  Total parameters: {model.num_parameters:,}")
+            print(f"  Backend: {'Mamba' if model.uses_mamba else 'GRU (fallback)'}")
+
+            print(f"\n[3/3] Training with Ensemble Adaptive CQL...")
+            print(f"  {n_members} members, diversity={div_type} (weight={div_weight})")
+            print(f"  λ per-member adaptive: [{lam_min}, {lam_max}], init={lam_init}")
+
+            trainer = EnsembleAdaptiveCQLTrainer(
+                model,
+                train_config,
+                device,
+                lam_init=lam_init,
+                lam_min=lam_min,
+                lam_max=lam_max,
+                diversity_weight=div_weight,
+                diversity_type=div_type,
+            )
+        elif use_adaptive_cql:
+            # --- Single-model adaptive CQL ---
+            print(f"\n[2/3] Creating Q-Mamba model...")
+            model = QMamba(
+                state_dim=state_dim,
+                K=K,
+                M=M,
+                d_model=d_model,
+                d_state=d_state,
+                n_layers=n_layers,
+                num_hidden_mlp=num_hidden_mlp
+            )
+            print(f"  Model parameters: {model.num_parameters:,}")
+            print(f"  Backend: {'Mamba' if model.uses_mamba else 'GRU (fallback)'}")
+
+            print(f"\n[3/3] Training with Adaptive CQL...")
+            print(f"  λ∈[{lam_min}, {lam_max}], init={lam_init}")
+
             trainer = AdaptiveCQLTrainer(
                 model,
                 train_config,
@@ -200,7 +255,21 @@ def main():
                 uncertainty_interval=uncertainty_interval
             )
         else:
-            print(f"  Using QMTrainer (standard CQL)")
+            # --- Standard CQL ---
+            print(f"\n[2/3] Creating Q-Mamba model...")
+            model = QMamba(
+                state_dim=state_dim,
+                K=K,
+                M=M,
+                d_model=d_model,
+                d_state=d_state,
+                n_layers=n_layers,
+                num_hidden_mlp=num_hidden_mlp
+            )
+            print(f"  Model parameters: {model.num_parameters:,}")
+            print(f"  Backend: {'Mamba' if model.uses_mamba else 'GRU (fallback)'}")
+
+            print(f"\n[3/3] Training with standard CQL...")
             trainer = QMTrainer(model, train_config, device)
         trainer.fit(train_loader, val_loader, verbose=True)
 
