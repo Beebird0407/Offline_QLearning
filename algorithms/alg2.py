@@ -297,8 +297,13 @@ class Alg2Optimizer:
 
         # Use SG4 subpopulation for DE/current-to-best/1
         sg4_idx = self.sg_indices[4]
-        sg4_pop = pop[sg4_idx]
-        sg4_fit = fitness[sg4_idx]
+        # Fall back to full population when subgroup is too small (<3 members)
+        if len(sg4_idx) >= 3:
+            sg4_pop = pop[sg4_idx]
+            sg4_fit = fitness[sg4_idx]
+        else:
+            sg4_pop = pop
+            sg4_fit = fitness
 
         for i in sg4_idx:
             mutant = self._de_current_to_best_mutation(pop[i], sg4_pop, sg4_fit, params['F14'], params['F24'])

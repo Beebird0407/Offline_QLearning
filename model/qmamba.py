@@ -103,10 +103,9 @@ class QMamba(nn.Module):
         return torch.full((batch_size,), self.start_token_idx, dtype=torch.long, device=device)
 
     def _int_to_binary(self, int_tensor: torch.Tensor) -> torch.Tensor:
-        device = int_tensor.device
-        binary_strings = [bin(i)[2:].zfill(self.token_dim) for i in int_tensor.view(-1).tolist()]
-        return torch.tensor([[float(b) for b in s] for s in binary_strings],
-                            dtype=torch.float32, device=device).view(*int_tensor.shape, -1)
+        """Bit-decomposition on GPU — avoids Python string conversion bottleneck."""
+        shifts = torch.arange(self.token_dim - 1, -1, -1, device=int_tensor.device)
+        return ((int_tensor.unsqueeze(-1) >> shifts) & 1).float()
 
     def parse_batch_to_input(
         self,
@@ -116,9 +115,12 @@ class QMamba(nn.Module):
         B, T, _ = states.shape
         K = actions.shape[2]
         s_norm = self.state_norm(states.reshape(B * T, -1)).reshape(B, T, -1)
+        # Interleave state with each action token: [s, a0, s, a1, ...]
         s_aug = s_norm.unsqueeze(2).expand(B, T, K, self.state_dim).reshape(B, T * K, self.state_dim)
+        # start token for each of the K action slots per timestep
         start_token = torch.ones(B, T, 1, self.token_dim, device=states.device)
-        act_bin = self._int_to_binary(actions)[:, :, :-1, :]
+        # binary-decompose all actions at once (fully on GPU)
+        act_bin = self._int_to_binary(actions)[:, :, :-1]  # (B, T, K-1, token_dim)
         act_seq = torch.cat([start_token, act_bin], dim=2).reshape(B, T * K, self.token_dim)
         return torch.cat([s_aug, act_seq], dim=-1)
 

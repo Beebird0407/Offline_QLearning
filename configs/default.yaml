@@ -20,8 +20,8 @@ state_action:
 
 # === Algorithm ===
 algorithm:
-  type: "Alg1"               # Alg0 (K=3, pop=100) | Alg1 (K=10, pop=250) | Alg2 (K=16, pop=500)
-  pop_size: 250              # Initial population size (set per algorithm above)
+  type: "Alg0"               # Alg0 (K=3, pop=100) | Alg1 (K=10, pop=250) | Alg2 (K=16, pop=500)
+  pop_size: 100              # Initial population size (set per algorithm above)
   use_lpsr: true             # Linear Population Size Reduction
   min_pop_size: 4            # Minimum population under LPSR
 
