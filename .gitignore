@@ -8,6 +8,7 @@ build/
 # Models & checkpoints
 *.pth
 checkpoints/
+Trained_model/
 
 # Dataset files (too large for GitHub)
 *.pkl
